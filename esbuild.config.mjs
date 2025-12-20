@@ -12,11 +12,10 @@ build({
   platform: 'node',
   external: [
     // 'next',
-    'electron', // Don't bundle Electron, it's provided by Electron itself
-    // 'electron-updater', // Don't bundle `electron-updater` as it dynamically loads native modules
-    // // 'electron-serve',
-    // '@sentry/electron',
-    // 'app-root-path',
+    'electron',
+    'keytar',
+    // 'electron-updater', // ...
+    // 'electron-serve',
     'node:path',
   ],
   format: 'cjs',
