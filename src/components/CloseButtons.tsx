@@ -1,6 +1,13 @@
+const isMac = navigator.platform.toLowerCase().includes("mac");
+
 const CloseButtons = () => {
+  // On macOS, use native traffic light buttons instead
+  if (isMac) {
+    return null;
+  }
+
   return (
-    <div className="float-right h-full flex leading-[30px] dark:bg-main-dark no-drag gap-1">
+    <div className="flex items-center gap-1 no-drag">
       <button
         onClick={() => window?.electron?.minimize()}
         className="tileStyleButton"
@@ -41,7 +48,7 @@ const CloseButtons = () => {
         onClick={() => window?.electron?.close()}
         className="tileStyleButton hover:bg-[#ff0000dd] dark:hover:bg-[#ff0000dd] hover:text-white"
       >
-        <span className="text-2xl font-extralight mb-1.5">&times;</span>
+        <span className="text-2xl font-extralight">&times;</span>
       </button>
     </div>
   );

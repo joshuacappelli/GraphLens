@@ -30,6 +30,7 @@ const GITHUB_OAUTH_CONFIG: GitHubOAuthConfig = {
   clientId: process.env.GITHUB_CLIENT_ID ?? "",
   clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
   redirectUri: process.env.GITHUB_REDIRECT_URI ?? "http://localhost/auth/callback",
+  scopes: ["repo", "user", "user:email", "read:org"],
 };
 
 type AuthStorage = {
@@ -199,4 +200,36 @@ ipcMain.handle("auth/start", async () => {
   }
 
   return startAuthFlow(mainWindow);
+});
+
+ipcMain.handle("auth/logout", async () => {
+  await keytar.deletePassword(KEYTAR_SERVICE_NAME, TOKEN_KEY);
+  await keytar.deletePassword(KEYTAR_SERVICE_NAME, IDENTIFIER_KEY);
+  return true;
+});
+
+ipcMain.handle("auth/getUserInfo", async () => {
+  const savedAuth = await loadSavedAuth();
+  if (!savedAuth?.tokens.access_token) {
+    return null;
+  }
+
+  const response = await fetch("https://api.github.com/user", {
+    headers: {
+      Authorization: `Bearer ${savedAuth.tokens.access_token}`,
+      Accept: "application/vnd.github+json",
+    },
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const user = await response.json();
+  return {
+    login: user.login,
+    email: user.email,
+    name: user.name,
+    avatarUrl: user.avatar_url,
+  };
 });

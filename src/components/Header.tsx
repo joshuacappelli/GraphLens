@@ -17,7 +17,12 @@ const Header = () => {
   }, []);
 
   return (
-    <nav ref={header} className="h-11 dark:bg-main-dark bg-[#f7f7f7] z-10 drag p-1">
+    <nav ref={header} className="h-11 dark:bg-main-crust bg-[#f7f7f7] z-10 drag items-center justify-between inline-flex">
+      {/* CENTER (optional branding / empty for drag space) */}
+      <div className="flex-1 text-center text-xs text-slate-400 pointer-events-none select-none">
+        Neptune
+      </div>
+      
       {window.electron && <CloseButtons />}
     </nav>
   );

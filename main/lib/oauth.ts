@@ -13,6 +13,7 @@ export interface GitHubOAuthConfig {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
+  scopes?: string[];
 }
 
 interface GitHubTokenResponse {
@@ -29,6 +30,7 @@ export function buildGitHubAuthUrl(config: GitHubOAuthConfig, state: string): st
   const params = new URLSearchParams({
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
+    scope: config.scopes?.join(" ") ?? "",
     state,
   });
 

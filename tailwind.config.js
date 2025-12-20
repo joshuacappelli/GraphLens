@@ -7,7 +7,10 @@ export default {
       colors: {
         main: {
           dark: '#222831',
-          light: '#31363F'
+          light: '#31363F',
+          base: '#24273A',
+          mantle: '#1E2030',
+          crust: '#181926',
         }
       }
     }
