@@ -88,11 +88,7 @@ function App() {
       {authState && <AppBar isLoggedIn={!!authState} userInfo={userInfo} onLogout={handleLogout} />}
       
       {authState ? (
-        <Home
-          authState={authState}
-          onReconnect={startAuth}
-          isAuthenticating={isAuthenticating}
-        />
+        <Home />
       ) : (
         <Login
           onLogin={startAuth}

@@ -3,6 +3,8 @@ import serve from "electron-serve";
 import path, { join } from "path";
 import { config as loadEnv } from "dotenv";
 import { randomUUID } from "crypto";
+import { mkdirSync } from "fs";
+import { homedir } from "os";
 import keytar from "keytar";
 
 import { getURL } from "./lib/getUrl";
@@ -14,9 +16,37 @@ import {
   GitHubOAuthConfig,
   OAuthTokens,
 } from "./lib/oauth";
+import { closePool } from "./lib/db";
+import { fetchUserRepos, fetchUser, isRateLimitError, isAuthError } from "./lib/github";
+import {
+  listTrackedRepos,
+  addTrackedRepo,
+  removeTrackedRepo,
+  setRepoEnabled,
+  getTrackedRepoByExternalId,
+  type AddRepoInput,
+} from "./lib/repos";
+import { enqueueJob, listActiveJobs, listRecentJobs } from "./lib/jobs";
 
 const envFilePath = join(process.cwd(), ".env");
 loadEnv({ path: envFilePath });
+
+// Neptune data directories
+const NEPTUNE_HOME = join(homedir(), ".neptune");
+const NEPTUNE_DIRS = {
+  root: NEPTUNE_HOME,
+  repos: join(NEPTUNE_HOME, "repos"),
+  zoekt: join(NEPTUNE_HOME, "zoekt"),
+  db: join(NEPTUNE_HOME, "db"),
+  logs: join(NEPTUNE_HOME, "logs"),
+};
+
+function initializeDataDirectories() {
+  Object.values(NEPTUNE_DIRS).forEach((dir) => {
+    mkdirSync(dir, { recursive: true });
+  });
+  console.log(`Neptune data directory initialized at ${NEPTUNE_HOME}`);
+}
 
 if (!isDev) {
   serve({ directory: join(__dirname, "renderer"), hostname: "example" });
@@ -162,7 +192,10 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  initializeDataDirectories();
+  createWindow();
+});
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
@@ -214,22 +247,137 @@ ipcMain.handle("auth/getUserInfo", async () => {
     return null;
   }
 
-  const response = await fetch("https://api.github.com/user", {
-    headers: {
-      Authorization: `Bearer ${savedAuth.tokens.access_token}`,
-      Accept: "application/vnd.github+json",
-    },
-  });
-
-  if (!response.ok) {
+  try {
+    const user = await fetchUser(savedAuth.tokens.access_token);
+    return {
+      login: user.login,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatar_url,
+    };
+  } catch (error) {
+    if (isRateLimitError(error)) {
+      throw new Error(error.message);
+    }
+    if (isAuthError(error)) {
+      throw new Error(error.message);
+    }
+    console.error("Failed to fetch user info:", error);
     return null;
   }
+});
 
-  const user = await response.json();
-  return {
-    login: user.login,
-    email: user.email,
-    name: user.name,
-    avatarUrl: user.avatar_url,
+// ============================================================================
+// Repos Management (PostgreSQL)
+// ============================================================================
+
+// Fetch available repos from GitHub (live)
+ipcMain.handle("repos/fetchGitHub", async () => {
+  const savedAuth = await loadSavedAuth();
+  if (!savedAuth?.tokens.access_token) {
+    throw new Error("Not authenticated");
+  }
+
+  try {
+    const repos = await fetchUserRepos(savedAuth.tokens.access_token);
+    
+    // Map to frontend format, prefer SSH URL for cloning
+    return repos.map((repo) => ({
+      id: repo.id,
+      fullName: repo.full_name,
+      name: repo.name,
+      owner: repo.owner.login,
+      description: repo.description,
+      isPrivate: repo.private,
+      isFork: repo.fork,
+      isArchived: repo.archived,
+      htmlUrl: repo.html_url,
+      cloneUrl: repo.ssh_url, // Prefer SSH for private repos
+      defaultBranch: repo.default_branch,
+    }));
+  } catch (error) {
+    if (isRateLimitError(error)) {
+      throw new Error(error.message);
+    }
+    if (isAuthError(error)) {
+      throw new Error(error.message);
+    }
+    throw error;
+  }
+});
+
+// List tracked repos from database with computed status
+ipcMain.handle("repos/listTracked", async () => {
+  return listTrackedRepos();
+});
+
+// Add a repo to tracked list (inserts into DB)
+ipcMain.handle("repos/addTracked", async (_event, input: {
+  externalRepoId: number;
+  fullName: string;
+  name: string;
+  owner: string;
+  cloneUrl: string;
+  defaultBranch: string;
+  isPrivate: boolean;
+  isFork: boolean;
+  isArchived: boolean;
+}) => {
+  // Check if already tracked
+  const existing = await getTrackedRepoByExternalId(input.externalRepoId);
+  if (existing) {
+    return existing;
+  }
+
+  const repoInput: AddRepoInput = {
+    externalRepoId: input.externalRepoId,
+    owner: input.owner,
+    name: input.name,
+    fullName: input.fullName,
+    cloneUrl: input.cloneUrl,
+    defaultBranch: input.defaultBranch,
+    isPrivate: input.isPrivate,
+    isFork: input.isFork,
+    isArchived: input.isArchived,
   };
+
+  return addTrackedRepo(repoInput);
+});
+
+// Remove a repo from tracked list
+ipcMain.handle("repos/remove", async (_event, repoId: number) => {
+  await removeTrackedRepo(repoId);
+  return listTrackedRepos();
+});
+
+// Set repo enabled/disabled (replaces toggleSearch)
+ipcMain.handle("repos/setEnabled", async (_event, repoId: number, enabled: boolean) => {
+  await setRepoEnabled(repoId, enabled);
+  return listTrackedRepos();
+});
+
+// Sync a repo - enqueues a job and returns immediately
+ipcMain.handle("repos/syncNow", async (_event, repoId: number) => {
+  const job = await enqueueJob("FETCH_REPO", repoId, null, null, 50);
+  return job;
+});
+
+// ============================================================================
+// Jobs Management
+// ============================================================================
+
+ipcMain.handle("jobs/listActive", async () => {
+  return listActiveJobs();
+});
+
+ipcMain.handle("jobs/listRecent", async (_event, limit: number = 20) => {
+  return listRecentJobs(limit);
+});
+
+// ============================================================================
+// Cleanup on app quit
+// ============================================================================
+
+app.on("before-quit", async () => {
+  await closePool();
 });

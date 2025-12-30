@@ -1,0 +1,244 @@
+import { query, queryOne } from "./db";
+import { join } from "path";
+import { homedir } from "os";
+
+const NEPTUNE_HOME = join(homedir(), ".neptune");
+
+// Types matching the database schema
+export type RepoStatus = "not_indexed" | "indexing" | "ready" | "failed";
+
+export type TrackedRepo = {
+  id: number;
+  provider: string;
+  externalRepoId: number;
+  hostUrl: string;
+  owner: string;
+  name: string;
+  fullName: string;
+  cloneUrl: string;
+  defaultBranch: string;
+  isPrivate: boolean;
+  isFork: boolean;
+  isArchived: boolean;
+  localMirrorPath: string;
+  enabled: boolean;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+  // Computed from jobs/indexes
+  status: RepoStatus;
+  lastSyncedAt: string | null;
+};
+
+type DbRepo = {
+  id: number;
+  provider: string;
+  external_repo_id: number;
+  host_url: string;
+  owner: string;
+  name: string;
+  full_name: string;
+  clone_url: string;
+  default_branch: string;
+  is_private: boolean;
+  is_fork: boolean;
+  is_archived: boolean;
+  local_mirror_path: string;
+  enabled: boolean;
+  pinned: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type DbRepoWithStatus = DbRepo & {
+  status: RepoStatus;
+  last_synced_at: string | null;
+};
+
+function mapDbRepoToTrackedRepo(row: DbRepoWithStatus): TrackedRepo {
+  return {
+    id: row.id,
+    provider: row.provider,
+    externalRepoId: row.external_repo_id,
+    hostUrl: row.host_url,
+    owner: row.owner,
+    name: row.name,
+    fullName: row.full_name,
+    cloneUrl: row.clone_url,
+    defaultBranch: row.default_branch,
+    isPrivate: row.is_private,
+    isFork: row.is_fork,
+    isArchived: row.is_archived,
+    localMirrorPath: row.local_mirror_path,
+    enabled: row.enabled,
+    pinned: row.pinned,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status || "not_indexed",
+    lastSyncedAt: row.last_synced_at,
+  };
+}
+
+export async function listTrackedRepos(): Promise<TrackedRepo[]> {
+  // Join with jobs and zoekt_active_index to compute status
+  // Note: "ready" checks if ANY ref is indexed. For v2, make this ref-aware (repo_id, ref_id)
+  const rows = await query<DbRepoWithStatus>(`
+    SELECT 
+      r.*,
+      COALESCE(
+        CASE
+          WHEN EXISTS (SELECT 1 FROM jobs j WHERE j.repo_id = r.id AND j.status IN ('QUEUED', 'RUNNING') AND j.job_type IN ('FETCH_REPO', 'BUILD_ZOEKT')) THEN 'indexing'
+          WHEN EXISTS (SELECT 1 FROM zoekt_active_index zai WHERE zai.repo_id = r.id) THEN 'ready'
+          WHEN EXISTS (SELECT 1 FROM jobs j WHERE j.repo_id = r.id AND j.status = 'FAILED') THEN 'failed'
+          ELSE 'not_indexed'
+        END
+      , 'not_indexed') as status,
+      (
+        SELECT j.finished_at 
+        FROM jobs j 
+        WHERE j.repo_id = r.id AND j.status = 'DONE' AND j.job_type = 'FETCH_REPO'
+        ORDER BY j.finished_at DESC 
+        LIMIT 1
+      ) as last_synced_at
+    FROM repos r
+    ORDER BY r.pinned DESC, r.updated_at DESC
+  `);
+
+  return rows.map(mapDbRepoToTrackedRepo);
+}
+
+export async function getTrackedRepoById(repoId: number): Promise<TrackedRepo | null> {
+  const row = await queryOne<DbRepoWithStatus>(`
+    SELECT 
+      r.*,
+      COALESCE(
+        CASE
+          WHEN EXISTS (SELECT 1 FROM jobs j WHERE j.repo_id = r.id AND j.status IN ('QUEUED', 'RUNNING') AND j.job_type IN ('FETCH_REPO', 'BUILD_ZOEKT')) THEN 'indexing'
+          WHEN EXISTS (SELECT 1 FROM zoekt_active_index zai WHERE zai.repo_id = r.id) THEN 'ready'
+          WHEN EXISTS (SELECT 1 FROM jobs j WHERE j.repo_id = r.id AND j.status = 'FAILED') THEN 'failed'
+          ELSE 'not_indexed'
+        END
+      , 'not_indexed') as status,
+      (
+        SELECT j.finished_at 
+        FROM jobs j 
+        WHERE j.repo_id = r.id AND j.status = 'DONE' AND j.job_type = 'FETCH_REPO'
+        ORDER BY j.finished_at DESC 
+        LIMIT 1
+      ) as last_synced_at
+    FROM repos r
+    WHERE r.id = $1
+  `, [repoId]);
+
+  return row ? mapDbRepoToTrackedRepo(row) : null;
+}
+
+export async function getTrackedRepoByExternalId(
+  externalRepoId: number,
+  hostUrl: string = "https://github.com"
+): Promise<TrackedRepo | null> {
+  const row = await queryOne<DbRepoWithStatus>(`
+    SELECT 
+      r.*,
+      'not_indexed' as status,
+      null as last_synced_at
+    FROM repos r
+    WHERE r.external_repo_id = $1 AND r.host_url = $2
+  `, [externalRepoId, hostUrl]);
+
+  return row ? mapDbRepoToTrackedRepo(row) : null;
+}
+
+export type AddRepoInput = {
+  externalRepoId: number;
+  owner: string;
+  name: string;
+  fullName: string;
+  cloneUrl: string; // Should be SSH URL for private repos
+  defaultBranch: string;
+  isPrivate: boolean;
+  isFork: boolean;
+  isArchived: boolean;
+  hostUrl?: string;
+  provider?: string;
+};
+
+export async function addTrackedRepo(input: AddRepoInput): Promise<TrackedRepo> {
+  const hostUrl = input.hostUrl || "https://github.com";
+  const provider = input.provider || "github";
+  
+  // Generate local mirror path - include host to avoid collisions across GitHub/GHE
+  const hostSlug = hostUrl.replace(/^https?:\/\//, "").replace(/[^a-zA-Z0-9]/g, "_");
+  const localMirrorPath = join(NEPTUNE_HOME, "repos", hostSlug, input.owner, `${input.name}.git`);
+
+  // Unique constraint is on (host_url, external_repo_id) - see migration 002
+  const row = await queryOne<DbRepo>(`
+    INSERT INTO repos (
+      provider,
+      external_repo_id,
+      host_url,
+      owner,
+      name,
+      full_name,
+      clone_url,
+      default_branch,
+      is_private,
+      is_fork,
+      is_archived,
+      local_mirror_path
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ON CONFLICT (host_url, external_repo_id) DO UPDATE SET
+      clone_url = EXCLUDED.clone_url,
+      default_branch = EXCLUDED.default_branch,
+      is_private = EXCLUDED.is_private,
+      is_fork = EXCLUDED.is_fork,
+      is_archived = EXCLUDED.is_archived,
+      full_name = EXCLUDED.full_name,
+      updated_at = now()
+    RETURNING *
+  `, [
+    provider,
+    input.externalRepoId,
+    hostUrl,
+    input.owner,
+    input.name,
+    input.fullName,
+    input.cloneUrl,
+    input.defaultBranch,
+    input.isPrivate,
+    input.isFork,
+    input.isArchived,
+    localMirrorPath,
+  ]);
+
+  if (!row) {
+    throw new Error("Failed to insert repo");
+  }
+
+  return mapDbRepoToTrackedRepo({ ...row, status: "not_indexed", last_synced_at: null });
+}
+
+export async function removeTrackedRepo(repoId: number): Promise<void> {
+  await query(`DELETE FROM repos WHERE id = $1`, [repoId]);
+}
+
+export async function setRepoEnabled(repoId: number, enabled: boolean): Promise<TrackedRepo | null> {
+  await query(`
+    UPDATE repos 
+    SET enabled = $2, updated_at = now() 
+    WHERE id = $1
+  `, [repoId, enabled]);
+
+  return getTrackedRepoById(repoId);
+}
+
+export async function setRepoPinned(repoId: number, pinned: boolean): Promise<TrackedRepo | null> {
+  await query(`
+    UPDATE repos 
+    SET pinned = $2, updated_at = now() 
+    WHERE id = $1
+  `, [repoId, pinned]);
+
+  return getTrackedRepoById(repoId);
+}
+
