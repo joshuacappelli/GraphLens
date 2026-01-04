@@ -24,9 +24,11 @@ import {
   removeTrackedRepo,
   setRepoEnabled,
   getTrackedRepoByExternalId,
+  syncRepo,
   type AddRepoInput,
+  type RepoSyncResult,
 } from "./lib/repos";
-import { enqueueJob, listActiveJobs, listRecentJobs } from "./lib/jobs";
+import { listActiveJobs, listRecentJobs } from "./lib/jobs";
 
 const envFilePath = join(process.cwd(), ".env");
 loadEnv({ path: envFilePath });
@@ -356,10 +358,10 @@ ipcMain.handle("repos/setEnabled", async (_event, repoId: number, enabled: boole
   return listTrackedRepos();
 });
 
-// Sync a repo - enqueues a job and returns immediately
-ipcMain.handle("repos/syncNow", async (_event, repoId: number) => {
-  const job = await enqueueJob("FETCH_REPO", repoId, null, null, 50);
-  return job;
+// Sync a repo - clones or fetches the mirror, updates repo_refs
+ipcMain.handle("repos/syncNow", async (_event, repoId: number): Promise<RepoSyncResult> => {
+  const result = await syncRepo(repoId);
+  return result;
 });
 
 // ============================================================================

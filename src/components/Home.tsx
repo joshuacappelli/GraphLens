@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, RefreshCw, Lock, Globe, Trash2, Search, Archive, GitFork } from "lucide-react";
+import { Plus, RefreshCw, Lock, Globe, Trash2, Search, Archive, GitFork, Check, GitCommit } from "lucide-react";
 import AddRepoModal from "./AddRepoModal";
 
 type RepoStatus = "not_indexed" | "indexing" | "ready" | "failed";
@@ -24,6 +24,12 @@ type TrackedRepo = {
   updatedAt: string;
   status: RepoStatus;
   lastSyncedAt: string | null;
+  headSha: string | null;
+};
+
+type SyncStatus = {
+  action: "cloned" | "fetched" | "up-to-date" | "error";
+  message: string;
 };
 
 type GitHubRepo = {
@@ -52,6 +58,7 @@ const Home = () => {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [syncingRepos, setSyncingRepos] = useState<Set<number>>(new Set());
+  const [syncStatus, setSyncStatus] = useState<Map<number, SyncStatus>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -117,13 +124,41 @@ const Home = () => {
     if (!window.electron) return;
     
     setSyncingRepos((prev) => new Set(prev).add(repoId));
+    // Clear any previous sync status
+    setSyncStatus((prev) => {
+      const next = new Map(prev);
+      next.delete(repoId);
+      return next;
+    });
     
     try {
-      await window.electron.syncRepoNow(repoId);
+      const result = await window.electron.syncRepoNow(repoId);
+      
+      // Set sync status for feedback
+      setSyncStatus((prev) => {
+        const next = new Map(prev);
+        next.set(repoId, { action: result.action, message: result.message });
+        return next;
+      });
+      
       // Reload to get updated status
       await loadRepos();
+      
+      // Clear sync status after 5 seconds
+      setTimeout(() => {
+        setSyncStatus((prev) => {
+          const next = new Map(prev);
+          next.delete(repoId);
+          return next;
+        });
+      }, 5000);
     } catch (err) {
       console.error("Failed to sync repo:", err);
+      setSyncStatus((prev) => {
+        const next = new Map(prev);
+        next.set(repoId, { action: "error", message: err instanceof Error ? err.message : "Sync failed" });
+        return next;
+      });
     } finally {
       setSyncingRepos((prev) => {
         const next = new Set(prev);
@@ -192,7 +227,8 @@ const Home = () => {
           <div className="space-y-3 max-w-4xl mx-auto">
             {repos.map((repo) => {
               const status = statusConfig[repo.status];
-              const isSyncing = syncingRepos.has(repo.id) || repo.status === "indexing";
+              const isSyncing = syncingRepos.has(repo.id);
+              const repoSyncStatus = syncStatus.get(repo.id);
               
               return (
                 <div
@@ -230,12 +266,34 @@ const Home = () => {
                           {status.label}
                         </span>
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                      <div className="flex items-center gap-3 text-xs text-slate-500 mt-1 flex-wrap">
                         <span>Branch: {repo.defaultBranch}</span>
+                        {repo.headSha && (
+                          <span className="flex items-center gap-1">
+                            <GitCommit size={10} />
+                            {repo.headSha.slice(0, 7)}
+                          </span>
+                        )}
                         {repo.lastSyncedAt && (
-                          <span>Last synced: {new Date(repo.lastSyncedAt).toLocaleString()}</span>
+                          <span>Synced: {new Date(repo.lastSyncedAt).toLocaleString()}</span>
                         )}
                       </div>
+                      
+                      {/* Sync status feedback */}
+                      {repoSyncStatus && (
+                        <div className={`flex items-center gap-1.5 mt-2 text-xs ${
+                          repoSyncStatus.action === "error" 
+                            ? "text-red-400" 
+                            : repoSyncStatus.action === "cloned"
+                            ? "text-green-400"
+                            : repoSyncStatus.action === "fetched"
+                            ? "text-blue-400"
+                            : "text-slate-400"
+                        }`}>
+                          {repoSyncStatus.action !== "error" && <Check size={12} />}
+                          {repoSyncStatus.message}
+                        </div>
+                      )}
                     </div>
 
                     {/* Actions */}

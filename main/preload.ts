@@ -61,6 +61,16 @@ export type TrackedRepo = {
   updatedAt: string;
   status: RepoStatus;
   lastSyncedAt: string | null;
+  headSha: string | null; // HEAD SHA of the default branch
+};
+
+// Result from syncing a repo
+export type RepoSyncResult = {
+  success: boolean;
+  action: "cloned" | "fetched" | "up-to-date" | "error";
+  headSha: string | null;
+  message: string;
+  repo: TrackedRepo | null;
 };
 
 // Job types
@@ -127,7 +137,7 @@ export const api = {
   setRepoEnabled: (repoId: number, enabled: boolean) => 
     ipcRenderer.invoke("repos/setEnabled", repoId, enabled) as Promise<TrackedRepo[]>,
   syncRepoNow: (repoId: number) => 
-    ipcRenderer.invoke("repos/syncNow", repoId) as Promise<Job>,
+    ipcRenderer.invoke("repos/syncNow", repoId) as Promise<RepoSyncResult>,
 
   // Jobs
   listActiveJobs: () => ipcRenderer.invoke("jobs/listActive") as Promise<Job[]>,

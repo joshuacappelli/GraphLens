@@ -58,7 +58,9 @@ const AddRepoModal = ({ isOpen, onClose, onAdd, trackedExternalIds }: AddRepoMod
   const filteredRepos = useMemo(() => {
     // Filter out repos that were already tracked BEFORE opening the modal
     // But keep repos added during THIS session (they'll show "Added" badge)
-    let filtered = repos.filter((repo) => !trackedExternalIds.includes(repo.id));
+    // trackedExternalIds may be strings (bigint from PostgreSQL), so convert for comparison
+    const trackedSet = new Set(trackedExternalIds.map(id => Number(id)));
+    let filtered = repos.filter((repo) => !trackedSet.has(repo.id));
     
     if (search.trim()) {
       const query = search.toLowerCase();
@@ -220,7 +222,7 @@ const AddRepoModal = ({ isOpen, onClose, onAdd, trackedExternalIds }: AddRepoMod
         {/* Footer */}
         <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between">
           <p className="text-xs text-slate-500">
-            {filteredRepos.length - justAddedRepos.size} available • {trackedExternalIds.length + justAddedRepos.size} tracked
+            {filteredRepos.length - justAddedRepos.size} available • {trackedExternalIds.length} tracked
             {justAddedRepos.size > 0 && (
               <span className="text-green-400 ml-2">
                 (+{justAddedRepos.size} just added)

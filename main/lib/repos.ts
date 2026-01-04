@@ -28,6 +28,8 @@ export type TrackedRepo = {
   // Computed from jobs/indexes
   status: RepoStatus;
   lastSyncedAt: string | null;
+  // From repo_refs for the default branch
+  headSha: string | null;
 };
 
 type DbRepo = {
@@ -53,6 +55,7 @@ type DbRepo = {
 type DbRepoWithStatus = DbRepo & {
   status: RepoStatus;
   last_synced_at: string | null;
+  head_sha: string | null;
 };
 
 function mapDbRepoToTrackedRepo(row: DbRepoWithStatus): TrackedRepo {
@@ -76,11 +79,12 @@ function mapDbRepoToTrackedRepo(row: DbRepoWithStatus): TrackedRepo {
     updatedAt: row.updated_at,
     status: row.status || "not_indexed",
     lastSyncedAt: row.last_synced_at,
+    headSha: row.head_sha,
   };
 }
 
 export async function listTrackedRepos(): Promise<TrackedRepo[]> {
-  // Join with jobs and zoekt_active_index to compute status
+  // Join with jobs, zoekt_active_index, and repo_refs to compute status and get head_sha
   // Note: "ready" checks if ANY ref is indexed. For v2, make this ref-aware (repo_id, ref_id)
   const rows = await query<DbRepoWithStatus>(`
     SELECT 
@@ -94,12 +98,17 @@ export async function listTrackedRepos(): Promise<TrackedRepo[]> {
         END
       , 'not_indexed') as status,
       (
-        SELECT j.finished_at 
-        FROM jobs j 
-        WHERE j.repo_id = r.id AND j.status = 'DONE' AND j.job_type = 'FETCH_REPO'
-        ORDER BY j.finished_at DESC 
+        SELECT rf.last_fetched_at 
+        FROM repo_refs rf 
+        WHERE rf.repo_id = r.id AND rf.ref_name = r.default_branch AND rf.ref_type = 'branch'
         LIMIT 1
-      ) as last_synced_at
+      ) as last_synced_at,
+      (
+        SELECT rf.head_sha 
+        FROM repo_refs rf 
+        WHERE rf.repo_id = r.id AND rf.ref_name = r.default_branch AND rf.ref_type = 'branch'
+        LIMIT 1
+      ) as head_sha
     FROM repos r
     ORDER BY r.pinned DESC, r.updated_at DESC
   `);
@@ -120,12 +129,17 @@ export async function getTrackedRepoById(repoId: number): Promise<TrackedRepo | 
         END
       , 'not_indexed') as status,
       (
-        SELECT j.finished_at 
-        FROM jobs j 
-        WHERE j.repo_id = r.id AND j.status = 'DONE' AND j.job_type = 'FETCH_REPO'
-        ORDER BY j.finished_at DESC 
+        SELECT rf.last_fetched_at 
+        FROM repo_refs rf 
+        WHERE rf.repo_id = r.id AND rf.ref_name = r.default_branch AND rf.ref_type = 'branch'
         LIMIT 1
-      ) as last_synced_at
+      ) as last_synced_at,
+      (
+        SELECT rf.head_sha 
+        FROM repo_refs rf 
+        WHERE rf.repo_id = r.id AND rf.ref_name = r.default_branch AND rf.ref_type = 'branch'
+        LIMIT 1
+      ) as head_sha
     FROM repos r
     WHERE r.id = $1
   `, [repoId]);
@@ -141,7 +155,8 @@ export async function getTrackedRepoByExternalId(
     SELECT 
       r.*,
       'not_indexed' as status,
-      null as last_synced_at
+      null as last_synced_at,
+      null as head_sha
     FROM repos r
     WHERE r.external_repo_id = $1 AND r.host_url = $2
   `, [externalRepoId, hostUrl]);
@@ -215,7 +230,7 @@ export async function addTrackedRepo(input: AddRepoInput): Promise<TrackedRepo> 
     throw new Error("Failed to insert repo");
   }
 
-  return mapDbRepoToTrackedRepo({ ...row, status: "not_indexed", last_synced_at: null });
+  return mapDbRepoToTrackedRepo({ ...row, status: "not_indexed", last_synced_at: null, head_sha: null });
 }
 
 export async function removeTrackedRepo(repoId: number): Promise<void> {
@@ -240,5 +255,86 @@ export async function setRepoPinned(repoId: number, pinned: boolean): Promise<Tr
   `, [repoId, pinned]);
 
   return getTrackedRepoById(repoId);
+}
+
+/**
+ * Upsert a repo ref (branch) with the current HEAD SHA
+ */
+export async function upsertRepoRef(
+  repoId: number,
+  refName: string,
+  headSha: string,
+  refType: string = "branch"
+): Promise<void> {
+  await query(`
+    INSERT INTO repo_refs (repo_id, ref_name, ref_type, head_sha, last_fetched_at)
+    VALUES ($1, $2, $3, $4, now())
+    ON CONFLICT (repo_id, ref_type, ref_name) DO UPDATE SET
+      head_sha = EXCLUDED.head_sha,
+      last_fetched_at = now(),
+      updated_at = now()
+  `, [repoId, refName, refType, headSha]);
+}
+
+// Import git functions for syncRepo
+import { syncMirror } from "./git";
+
+export type RepoSyncResult = {
+  success: boolean;
+  action: "cloned" | "fetched" | "up-to-date" | "error";
+  headSha: string | null;
+  message: string;
+  repo: TrackedRepo | null;
+};
+
+/**
+ * Sync a repository: clone or fetch the mirror, update repo_refs
+ */
+export async function syncRepo(repoId: number): Promise<RepoSyncResult> {
+  // Get the repo details
+  const repo = await getTrackedRepoById(repoId);
+  if (!repo) {
+    return {
+      success: false,
+      action: "error",
+      headSha: null,
+      message: "Repository not found",
+      repo: null,
+    };
+  }
+
+  // Run the git sync
+  const result = await syncMirror(
+    repo.cloneUrl,
+    repo.owner,
+    repo.name,
+    repo.defaultBranch
+  );
+
+  if (!result.success) {
+    return {
+      success: false,
+      action: "error",
+      headSha: null,
+      message: result.message,
+      repo,
+    };
+  }
+
+  // Update repo_refs with the new HEAD SHA
+  if (result.headSha) {
+    await upsertRepoRef(repoId, repo.defaultBranch, result.headSha);
+  }
+
+  // Get updated repo with new head_sha
+  const updatedRepo = await getTrackedRepoById(repoId);
+
+  return {
+    success: true,
+    action: result.action,
+    headSha: result.headSha,
+    message: result.message,
+    repo: updatedRepo,
+  };
 }
 
