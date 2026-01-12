@@ -74,19 +74,44 @@ export function ensureZoektDirectories() {
   );
 }
 
-function activeRepoKey(owner: string, name: string) {
-  return `${owner}__${name}`;
+function sanitizeRepoKey(owner: string, name: string) {
+  return `${owner}__${name}`.replace(/[^a-zA-Z0-9_.-]/g, "_");
 }
 
-function updateActiveSymlink(owner: string, name: string, snapshotDir: string) {
-  fs.mkdirSync(ZOEKTS_ACTIVE_DIR, { recursive: true });
-  const linkPath = path.join(ZOEKTS_ACTIVE_DIR, activeRepoKey(owner, name));
-  try {
-    fs.rmSync(linkPath, { recursive: true, force: true });
-  } catch (err) {
-    console.warn(`[Zoekt] failed to clear active link for ${owner}/${name}:`, err);
+function removeActiveShardLinks(owner: string, name: string) {
+  if (!fs.existsSync(ZOEKTS_ACTIVE_DIR)) return;
+  const repoKey = sanitizeRepoKey(owner, name);
+  for (const entry of fs.readdirSync(ZOEKTS_ACTIVE_DIR)) {
+    if (!entry.startsWith(`${repoKey}__`) || !entry.endsWith(".zoekt")) {
+      continue;
+    }
+    try {
+      fs.unlinkSync(path.join(ZOEKTS_ACTIVE_DIR, entry));
+    } catch {}
   }
-  fs.symlinkSync(snapshotDir, linkPath, "dir");
+}
+
+function linkSnapshotShardsIntoActive(owner: string, name: string, snapshotDir: string) {
+  fs.mkdirSync(ZOEKTS_ACTIVE_DIR, { recursive: true });
+  const repoKey = sanitizeRepoKey(owner, name);
+  removeActiveShardLinks(owner, name);
+  const shardFiles = fs
+    .readdirSync(snapshotDir)
+    .filter((entry) => entry.endsWith(".zoekt"));
+
+  if (!shardFiles.length) {
+    throw new Error(`[Zoekt] No .zoekt shard files found in snapshot dir: ${snapshotDir}`);
+  }
+
+  for (const shard of shardFiles) {
+    const src = path.join(snapshotDir, shard);
+    const dstName = `${repoKey}__${shard}`;
+    const dst = path.join(ZOEKTS_ACTIVE_DIR, dstName);
+    if (fs.existsSync(dst)) {
+      fs.unlinkSync(dst);
+    }
+    fs.symlinkSync(src, dst);
+  }
 }
 
 function getPortCandidates(): number[] {
@@ -270,15 +295,7 @@ export async function cleanupRepoSnapshots(repoId: number) {
     [repoId]
   );
   if (repoMeta) {
-    const linkPath = path.join(
-      ZOEKTS_ACTIVE_DIR,
-      activeRepoKey(repoMeta.owner, repoMeta.name)
-    );
-    try {
-      fs.rmSync(linkPath, { recursive: true, force: true });
-    } catch (error) {
-      // ignore if the link was already removed
-    }
+    removeActiveShardLinks(repoMeta.owner, repoMeta.name);
   }
 }
 
@@ -545,7 +562,7 @@ export async function activateSnapshot(
   snapshotDir: string
 ): Promise<void> {
   await setActiveIndex(repoId, refId, snapshotId);
-  updateActiveSymlink(owner, name, snapshotDir);
+  linkSnapshotShardsIntoActive(owner, name, snapshotDir);
   await restartZoektWebserver();
 }
 

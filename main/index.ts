@@ -452,7 +452,16 @@ ipcMain.handle("zoekt/search", async (_event, options: ZoektSearchHandlerOptions
     console.info(
       `[Zoekt] search returned ${payload.total ?? payload.result?.Stats?.MatchCount ?? "?"} matches`
     );
+    if (payload.FileMatches?.length || payload.result?.FileMatches?.length) {
+      console.info(
+        `[Zoekt] FileMatches count`,
+        payload.FileMatches?.length ?? payload.result?.FileMatches?.length
+      );
+    } else {
+      console.info("[Zoekt] FileMatches missing or empty", { payload });
+    }
     const snippets = await buildContextSnippets(payload, options);
+    console.info("[Zoekt] built context snippets", Object.keys(snippets).length);
     return {
       ...payload,
       snippets,
@@ -584,6 +593,7 @@ async function buildContextSnippets(
     }
     const lines = await loadFileLines(owner, repoShortName, fileName);
     if (!lines?.length) {
+      console.warn(`[Zoekt] could not load file lines for ${repoName}/${fileName}`);
       continue;
     }
     const matchList =
