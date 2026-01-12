@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
+import net from "net";
 import { app } from "electron";
 import { homedir } from "os";
 
@@ -13,6 +14,20 @@ import { ClonePreference } from "./repos";
 const ZOEKTS_BASE = path.join(NEPTUNE_HOME, "zoekt");
 const ZOEKTS_REPOS_DIR = path.join(ZOEKTS_BASE, "repos");
 const ZOEKTS_INDEX_DIR = path.join(ZOEKTS_BASE, "indexes");
+const ZOEKTS_ACTIVE_DIR = path.join(ZOEKTS_INDEX_DIR, "_active");
+
+const ZOEKT_WEBSERVER_HOST = process.env.ZOEKT_WEBSERVER_HOST ?? "127.0.0.1";
+const DEFAULT_WEBSERVER_PORT = parseInt(
+  process.env.ZOEKT_WEBSERVER_PORT ?? "6070",
+  10
+);
+const FALLBACK_WEBSERVER_PORTS = (process.env.ZOEKT_WEBSERVER_PORT_FALLBACK ?? "6071,6072,6073")
+  .split(",")
+  .map((value) => parseInt(value.trim(), 10))
+  .filter((value) => Number.isFinite(value) && value > 0);
+
+let zoektWebserverPort = DEFAULT_WEBSERVER_PORT;
+let zoektWebserverProcess: ReturnType<typeof spawn> | null = null;
 
 type CommandResult = {
   success: boolean;
@@ -52,9 +67,69 @@ export type ZoektIndexResult = {
 };
 
 export function ensureZoektDirectories() {
-  [ZOEKTS_BASE, ZOEKTS_REPOS_DIR, ZOEKTS_INDEX_DIR].forEach((dir) => {
-    fs.mkdirSync(dir, { recursive: true });
+  [ZOEKTS_BASE, ZOEKTS_REPOS_DIR, ZOEKTS_INDEX_DIR, ZOEKTS_ACTIVE_DIR].forEach(
+    (dir) => {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  );
+}
+
+function activeRepoKey(owner: string, name: string) {
+  return `${owner}__${name}`;
+}
+
+function updateActiveSymlink(owner: string, name: string, snapshotDir: string) {
+  fs.mkdirSync(ZOEKTS_ACTIVE_DIR, { recursive: true });
+  const linkPath = path.join(ZOEKTS_ACTIVE_DIR, activeRepoKey(owner, name));
+  try {
+    fs.rmSync(linkPath, { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`[Zoekt] failed to clear active link for ${owner}/${name}:`, err);
+  }
+  fs.symlinkSync(snapshotDir, linkPath, "dir");
+}
+
+function getPortCandidates(): number[] {
+  return [
+    DEFAULT_WEBSERVER_PORT,
+    ...FALLBACK_WEBSERVER_PORTS,
+  ].filter((value, index, array) => array.indexOf(value) === index);
+}
+
+async function checkPort(port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    const cleanUp = () => {
+      server.removeAllListeners("error");
+      server.removeAllListeners("listening");
+      server.close();
+    };
+
+    server.once("error", (err) => {
+      cleanUp();
+      reject(err);
+    });
+    server.once("listening", () => {
+      cleanUp();
+      resolve();
+    });
+    server.listen(port, ZOEKT_WEBSERVER_HOST);
   });
+}
+
+async function findAvailablePort(): Promise<number> {
+  const candidates = getPortCandidates();
+  for (const port of candidates) {
+    try {
+      await checkPort(port);
+      return port;
+    } catch {
+      console.warn(`[Zoekt] Port ${port} unavailable, trying next`);
+    }
+  }
+  throw new Error(
+    `Unable to bind zoekt-webserver (ports tried: ${candidates.join(", ")})`
+  );
 }
 
 const SSH_KEY_FILES = ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"];
@@ -98,6 +173,113 @@ function resolveCloneUrl(options: ZoektIndexOptions): string {
   }
 
   throw new Error(`no clone URL available for ${options.owner}/${options.name}`);
+}
+
+async function startZoektWebserver() {
+  if (zoektWebserverProcess) return;
+  if (!fs.existsSync(ZOEKTS_ACTIVE_DIR)) {
+    fs.mkdirSync(ZOEKTS_ACTIVE_DIR, { recursive: true });
+  }
+
+  const port = await findAvailablePort();
+  const listenAddr = `${ZOEKT_WEBSERVER_HOST}:${port}`;
+  const args = ["-index", ZOEKTS_ACTIVE_DIR, "-listen", listenAddr];
+  console.info(`[Zoekt] Launching zoekt-webserver (${args.join(" ")})`);
+
+  const proc = spawn(getZoektPath("zoekt-webserver"), args, {
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  proc.stdout?.on("data", (chunk) => {
+    const text = chunk.toString().trim();
+    if (text) {
+      console.info(`[Zoekt-webserver:${port}] ${text}`);
+    }
+  });
+
+  proc.stderr?.on("data", (chunk) => {
+    const text = chunk.toString().trim();
+    if (text) {
+      console.error(`[Zoekt-webserver:${port}] ${text}`);
+    }
+  });
+
+  proc.on("exit", (code, signal) => {
+    console.warn(
+      `[Zoekt-webserver:${port}] exited with code=${code} signal=${signal}`
+    );
+    if (zoektWebserverProcess === proc) {
+      zoektWebserverProcess = null;
+    }
+  });
+
+  zoektWebserverProcess = proc;
+  zoektWebserverPort = port;
+}
+
+function stopZoektWebserver() {
+  if (!zoektWebserverProcess) {
+    return;
+  }
+
+  try {
+    zoektWebserverProcess.kill("SIGTERM");
+  } catch (err) {
+    console.warn("[Zoekt] Failed to stop zoekt-webserver:", err);
+  }
+
+  zoektWebserverProcess = null;
+}
+
+async function restartZoektWebserver() {
+  stopZoektWebserver();
+  await startZoektWebserver();
+}
+
+export function ensureZoektWebserver() {
+  void startZoektWebserver();
+}
+
+export function getZoektWebserverUrl(): string {
+  return `http://${ZOEKT_WEBSERVER_HOST}:${zoektWebserverPort}`;
+}
+
+export async function cleanupRepoSnapshots(repoId: number) {
+  const rows = await query<{ index_path: string | null }>(`
+    SELECT DISTINCT index_path FROM zoekt_index_snapshots WHERE repo_id = $1
+  `, [repoId]);
+
+  const paths = rows
+    .map((row) => row.index_path)
+    .filter((path): path is string => typeof path === "string" && path.length > 0);
+
+  const removed = new Set<string>();
+  for (const indexPath of paths) {
+    if (removed.has(indexPath)) continue;
+    removed.add(indexPath);
+    try {
+      fs.rmSync(indexPath, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`[Zoekt] failed to remove snapshot at ${indexPath}:`, error);
+    }
+  }
+
+  const repoMeta = await queryOne<{ owner: string; name: string }>(
+    `SELECT owner, name FROM repos WHERE id = $1`,
+    [repoId]
+  );
+  if (repoMeta) {
+    const linkPath = path.join(
+      ZOEKTS_ACTIVE_DIR,
+      activeRepoKey(repoMeta.owner, repoMeta.name)
+    );
+    try {
+      fs.rmSync(linkPath, { recursive: true, force: true });
+    } catch (error) {
+      // ignore if the link was already removed
+    }
+  }
 }
 
 function platformFolder() {
@@ -187,6 +369,30 @@ function getZoektRepoDir(owner: string, name: string): string {
 
 function getZoektIndexSnapshotDir(owner: string, name: string): string {
   return path.join(ZOEKTS_INDEX_DIR, owner, name);
+}
+
+export async function readFileFromZoektRepo(
+  owner: string,
+  name: string,
+  ref: string,
+  filePath: string
+): Promise<string | null> {
+  const repoDir = getZoektRepoDir(owner, name);
+  const result = await runCommand("git", [
+    "--git-dir",
+    repoDir,
+    "show",
+    `${ref}:${filePath}`,
+  ]);
+
+  if (!result.success) {
+    console.warn(
+      `[Zoekt] failed to read ${filePath} from ${owner}/${name}@${ref}: ${result.stderr}`
+    );
+    return null;
+  }
+
+  return result.stdout;
 }
 
 function runCommand(
@@ -330,6 +536,19 @@ async function setActiveIndex(repoId: number, refId: number, snapshotId: number)
   `, [repoId, refId, snapshotId]);
 }
 
+export async function activateSnapshot(
+  owner: string,
+  name: string,
+  repoId: number,
+  refId: number,
+  snapshotId: number,
+  snapshotDir: string
+): Promise<void> {
+  await setActiveIndex(repoId, refId, snapshotId);
+  updateActiveSymlink(owner, name, snapshotDir);
+  await restartZoektWebserver();
+}
+
 async function getIndexSnapshotDir(owner: string, name: string): Promise<string> {
   const base = getZoektIndexSnapshotDir(owner, name);
   const dir = path.join(base, `${Date.now()}-${randomUUID()}`);
@@ -427,7 +646,14 @@ export async function indexRepositoryWithZoekt(
     `[Zoekt] Index created at ${snapshotDir} (snapshot ${snapshot.id}); ${branchList.length} branch(es) indexed`
   );
   await markSnapshotReady(snapshot.id);
-  await setActiveIndex(options.repoId, refRow.id, snapshot.id);
+  await activateSnapshot(
+    options.owner,
+    options.name,
+    options.repoId,
+    refRow.id,
+    snapshot.id,
+    snapshotDir
+  );
 
   return {
     snapshotId: snapshot.id,

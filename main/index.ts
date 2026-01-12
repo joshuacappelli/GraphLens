@@ -31,7 +31,11 @@ import {
 import { listActiveJobs, listRecentJobs } from "./lib/jobs";
 import {
   ensureZoektDirectories,
+  ensureZoektWebserver,
+  getZoektWebserverUrl,
   indexRepositoryWithZoekt,
+  cleanupRepoSnapshots,
+  readFileFromZoektRepo,
 } from "./lib/zoekt";
 
 const envFilePath = join(process.cwd(), ".env");
@@ -201,6 +205,7 @@ async function createWindow() {
 app.whenReady().then(() => {
   initializeDataDirectories();
   ensureZoektDirectories();
+  ensureZoektWebserver();
   createWindow();
 });
 
@@ -376,6 +381,7 @@ ipcMain.handle("repos/addTracked", async (_event, input: {
 
 // Remove a repo from tracked list
 ipcMain.handle("repos/remove", async (_event, repoId: number) => {
+  await cleanupRepoSnapshots(repoId);
   await removeTrackedRepo(repoId);
   return listTrackedRepos();
 });
@@ -391,6 +397,223 @@ ipcMain.handle("repos/syncNow", async (_event, repoId: number): Promise<RepoSync
   const result = await syncRepo(repoId);
   return result;
 });
+
+type ZoektSearchHandlerOptions = {
+  query: string;
+  limit?: number;
+  repo?: string;
+  case?: "yes" | "no";
+  context?: number;
+  num?: number;
+};
+
+ipcMain.handle("zoekt/search", async (_event, options: ZoektSearchHandlerOptions) => {
+  if (!options?.query?.trim()) {
+    return { matches: [], total: 0 };
+  }
+
+  await ensureZoektWebserver();
+  const baseUrl = getZoektWebserverUrl();
+  const searchUrl = new URL(`${baseUrl}/search`);
+  searchUrl.searchParams.set("q", options.query.trim());
+  searchUrl.searchParams.set("format", "json");
+  searchUrl.searchParams.set("num", String(options.num ?? options.limit ?? 25));
+  searchUrl.searchParams.set("pattern", "literal");
+  if (options.repo) {
+    searchUrl.searchParams.set("repo", options.repo);
+  }
+  if (options.case) {
+    searchUrl.searchParams.set("case", options.case);
+  }
+  if (options.context !== undefined) {
+    searchUrl.searchParams.set("ctx", String(options.context));
+  }
+
+  console.info(`[Zoekt] search request -> ${searchUrl.toString()}`);
+  console.info(`[Zoekt] search options ->`, options);
+
+  const response = await fetch(searchUrl.toString(), {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  console.info(`[Zoekt] HTTP ${response.status} ${searchUrl.toString()}`);
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error(`[Zoekt] response body (error): ${text}`);
+    throw new Error(`Zoekt search failed: ${response.status} ${text}`);
+  }
+
+  const bodyText = await response.text();
+  try {
+    const payload = JSON.parse(bodyText);
+    console.info(
+      `[Zoekt] search returned ${payload.total ?? payload.result?.Stats?.MatchCount ?? "?"} matches`
+    );
+    const snippets = await buildContextSnippets(payload, options);
+    return {
+      ...payload,
+      snippets,
+    };
+  } catch (err) {
+    console.error("[Zoekt] failed to parse response:", bodyText);
+    throw err;
+  }
+});
+
+type ZoektMatch = {
+  Repo?: string;
+  Repository?: string;
+  FileName?: string;
+  Matches?: ZoektMatch[];
+  Line?: number;
+  LineNum?: number;
+  Match?: string;
+};
+
+type ZoektSearchResultPayload = {
+  result?: {
+    FileMatches?: ZoektMatch[];
+    Stats?: { MatchCount?: number };
+  };
+  FileMatches?: ZoektMatch[];
+  Stats?: { MatchCount?: number };
+};
+
+const buildSnippetKey = (
+  repo: string,
+  fileName: string,
+  line: number | undefined,
+  highlight: string
+) => {
+  return `${repo}|${fileName}|${line ?? 0}|${highlight ?? ""}`;
+};
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightLine(
+  line: string,
+  patterns: string[],
+  caseSensitive: boolean
+): string {
+  const escapedLine = escapeHtml(line);
+  const safePatterns = patterns
+    .map((pattern) => pattern?.trim())
+    .filter(Boolean)
+    .map(escapeRegExp);
+  if (!safePatterns.length) {
+    return escapedLine;
+  }
+  const flags = caseSensitive ? "g" : "gi";
+  const regex = new RegExp(`(${safePatterns.join("|")})`, flags);
+  return escapedLine.replace(regex, (match) => `<mark>${match}</mark>`);
+}
+
+function buildContextSnippetHtml(
+  lines: string[],
+  lineNumber: number,
+  contextLines: number,
+  highlights: string[],
+  caseSensitive: boolean
+): string {
+  const zeroIndexed = Math.max(0, Math.min(lines.length - 1, lineNumber - 1));
+  const start = Math.max(0, zeroIndexed - contextLines);
+  const end = Math.min(lines.length, zeroIndexed + contextLines + 1);
+  if (start >= end) {
+    return "";
+  }
+  return lines
+    .slice(start, end)
+    .map((line) => highlightLine(line, highlights, caseSensitive))
+    .join("<br />");
+}
+
+async function buildContextSnippets(
+  payload: ZoektSearchResultPayload,
+  options: ZoektSearchHandlerOptions
+): Promise<Record<string, string>> {
+  ensureZoektDirectories();
+  const files = payload.FileMatches ?? payload.result?.FileMatches ?? [];
+  const contextLines = Math.max(0, options.context ?? 2);
+  const caseSensitive = options.case === "yes";
+  const fallbackHighlight = options.query ?? "";
+  const snippets: Record<string, string> = {};
+  const fileLineCache = new Map<string, Promise<string[] | null>>();
+
+  const loadFileLines = async (
+    owner: string,
+    name: string,
+    fileName: string
+  ) => {
+    const key = `${owner}/${name}:${fileName}`;
+    if (fileLineCache.has(key)) {
+      return fileLineCache.get(key) ?? null;
+    }
+    const promise = (async () => {
+      const content = await readFileFromZoektRepo(owner, name, "HEAD", fileName);
+      if (!content) return null;
+      return content.split(/\r?\n/);
+    })();
+    fileLineCache.set(key, promise);
+    return promise;
+  };
+
+  for (const fileMatch of files) {
+    const repoName = fileMatch.Repo ?? fileMatch.Repository ?? "";
+    const fileName = fileMatch.FileName ?? "";
+    if (!repoName || !fileName) {
+      continue;
+    }
+    const [owner, ...rest] = repoName.split("/");
+    const repoShortName = rest.join("/");
+    if (!owner || !repoShortName) {
+      continue;
+    }
+    const lines = await loadFileLines(owner, repoShortName, fileName);
+    if (!lines?.length) {
+      continue;
+    }
+    const matchList =
+      fileMatch.Matches && fileMatch.Matches.length
+        ? fileMatch.Matches
+        : [fileMatch];
+    for (const match of matchList) {
+      const lineNumber = match.Line ?? match.LineNum ?? 0;
+      if (lineNumber <= 0) {
+        continue;
+      }
+      const highlightHint = match.Match ?? fallbackHighlight;
+      const snippet = buildContextSnippetHtml(
+        lines,
+        lineNumber,
+        contextLines,
+        [highlightHint],
+        caseSensitive
+      );
+      if (!snippet) {
+        continue;
+      }
+      const key = buildSnippetKey(repoName, fileName, lineNumber, highlightHint);
+      snippets[key] = snippet;
+    }
+  }
+
+  return snippets;
+}
+
 
 // ============================================================================
 // Jobs Management

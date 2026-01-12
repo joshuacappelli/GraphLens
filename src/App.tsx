@@ -3,6 +3,7 @@ import Header from "./components/Header";
 import AppBar from "./components/AppBar";
 import Login from "./components/Login";
 import Home from "./components/Home";
+import SearchPage from "./components/SearchPage";
 
 type AuthTokens = {
   access_token?: string;
@@ -82,21 +83,32 @@ function App() {
     }
   };
 
-  return (
-    <main className="h-screen flex flex-col font-[roboto] font-bold bg-[#f7f7f7] dark:bg-main-light text-white">
-      <Header />
-      {authState && <AppBar isLoggedIn={!!authState} userInfo={userInfo} onLogout={handleLogout} />}
-      
-      {authState ? (
-        <Home />
-      ) : (
+  const [page, setPage] = useState<"home" | "search">("home");
+
+  const renderContent = () => {
+    if (!authState) {
+      return (
         <Login
           onLogin={startAuth}
           isAuthenticating={isAuthenticating}
           error={authError}
           loginMode={loginMode}
         />
-      )}
+      );
+    }
+
+    if (page === "search") {
+      return <SearchPage onClose={() => setPage("home")} />;
+    }
+
+    return <Home onSearchClick={() => setPage("search")} />;
+  };
+
+  return (
+    <main className="h-screen flex flex-col font-[roboto] font-bold bg-[#f7f7f7] dark:bg-main-light text-white">
+      <Header />
+      {authState && <AppBar isLoggedIn={!!authState} userInfo={userInfo} onLogout={handleLogout} />}
+      {renderContent()}
     </main>
   );
 }

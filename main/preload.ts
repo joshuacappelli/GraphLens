@@ -100,6 +100,11 @@ export type Job = {
   repoFullName?: string;
 };
 
+export type ZoektSearchResponse = {
+  snippets?: Record<string, string>;
+  [key: string]: unknown;
+};
+
 // Input for adding a tracked repo
 export type AddTrackedRepoInput = {
   externalRepoId: number;
@@ -149,6 +154,20 @@ export const api = {
   // Jobs
   listActiveJobs: () => ipcRenderer.invoke("jobs/listActive") as Promise<Job[]>,
   listRecentJobs: (limit?: number) => ipcRenderer.invoke("jobs/listRecent", limit) as Promise<Job[]>,
+  searchZoekt: (options: {
+    query: string;
+    limit?: number;
+    repo?: string;
+    case?: "yes" | "no";
+    context?: number;
+    num?: number;
+  }) => ipcRenderer.invoke("zoekt/search", options) as Promise<ZoektSearchResponse>,
 };
 
 contextBridge.exposeInMainWorld("electron", api);
+
+declare global {
+  interface Window {
+    electron: typeof api;
+  }
+}
