@@ -34,7 +34,9 @@ export type GitHubRepo = {
   isFork: boolean;
   isArchived: boolean;
   htmlUrl: string;
-  cloneUrl: string; // SSH URL preferred
+  cloneUrl: string; // legacy field (https)
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
   defaultBranch: string;
 };
 
@@ -50,6 +52,9 @@ export type TrackedRepo = {
   name: string;
   fullName: string;
   cloneUrl: string;
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
+  clonePreference: "https" | "ssh" | "auto";
   defaultBranch: string;
   isPrivate: boolean;
   isFork: boolean;
@@ -101,7 +106,9 @@ export type AddTrackedRepoInput = {
   fullName: string;
   name: string;
   owner: string;
-  cloneUrl: string;
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
+  clonePreference?: "https" | "ssh" | "auto";
   defaultBranch: string;
   isPrivate: boolean;
   isFork: boolean;

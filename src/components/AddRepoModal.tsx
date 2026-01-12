@@ -12,6 +12,8 @@ type GitHubRepo = {
   isArchived: boolean;
   htmlUrl: string;
   cloneUrl: string;
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
   defaultBranch: string;
 };
 

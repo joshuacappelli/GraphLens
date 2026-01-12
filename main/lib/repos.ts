@@ -6,6 +6,7 @@ const NEPTUNE_HOME = join(homedir(), ".neptune");
 
 // Types matching the database schema
 export type RepoStatus = "not_indexed" | "indexing" | "ready" | "failed";
+export type ClonePreference = "https" | "ssh" | "auto";
 
 export type TrackedRepo = {
   id: number;
@@ -16,6 +17,9 @@ export type TrackedRepo = {
   name: string;
   fullName: string;
   cloneUrl: string;
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
+  clonePreference: ClonePreference;
   defaultBranch: string;
   isPrivate: boolean;
   isFork: boolean;
@@ -41,6 +45,9 @@ type DbRepo = {
   name: string;
   full_name: string;
   clone_url: string;
+  clone_url_https: string;
+  clone_url_ssh: string;
+  clone_preference: ClonePreference;
   default_branch: string;
   is_private: boolean;
   is_fork: boolean;
@@ -58,6 +65,16 @@ type DbRepoWithStatus = DbRepo & {
   head_sha: string | null;
 };
 
+function resolveCloneUrl(row: DbRepoWithStatus | DbRepo): string {
+  if (row.clone_preference === "ssh" && row.clone_url_ssh) {
+    return row.clone_url_ssh;
+  }
+  if (row.clone_url_https) {
+    return row.clone_url_https;
+  }
+  return row.clone_url;
+}
+
 function mapDbRepoToTrackedRepo(row: DbRepoWithStatus): TrackedRepo {
   return {
     id: row.id,
@@ -67,7 +84,10 @@ function mapDbRepoToTrackedRepo(row: DbRepoWithStatus): TrackedRepo {
     owner: row.owner,
     name: row.name,
     fullName: row.full_name,
-    cloneUrl: row.clone_url,
+    cloneUrl: resolveCloneUrl(row),
+    cloneUrlHttps: row.clone_url_https,
+    cloneUrlSsh: row.clone_url_ssh,
+    clonePreference: row.clone_preference,
     defaultBranch: row.default_branch,
     isPrivate: row.is_private,
     isFork: row.is_fork,
@@ -169,7 +189,9 @@ export type AddRepoInput = {
   owner: string;
   name: string;
   fullName: string;
-  cloneUrl: string; // Should be SSH URL for private repos
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
+  clonePreference?: ClonePreference;
   defaultBranch: string;
   isPrivate: boolean;
   isFork: boolean;
@@ -196,14 +218,20 @@ export async function addTrackedRepo(input: AddRepoInput): Promise<TrackedRepo> 
       name,
       full_name,
       clone_url,
+      clone_url_https,
+      clone_url_ssh,
+      clone_preference,
       default_branch,
       is_private,
       is_fork,
       is_archived,
       local_mirror_path
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     ON CONFLICT (host_url, external_repo_id) DO UPDATE SET
       clone_url = EXCLUDED.clone_url,
+      clone_url_https = EXCLUDED.clone_url_https,
+      clone_url_ssh = EXCLUDED.clone_url_ssh,
+      clone_preference = EXCLUDED.clone_preference,
       default_branch = EXCLUDED.default_branch,
       is_private = EXCLUDED.is_private,
       is_fork = EXCLUDED.is_fork,
@@ -218,7 +246,10 @@ export async function addTrackedRepo(input: AddRepoInput): Promise<TrackedRepo> 
     input.owner,
     input.name,
     input.fullName,
-    input.cloneUrl,
+    input.cloneUrlHttps || input.cloneUrlSsh,
+    input.cloneUrlHttps,
+    input.cloneUrlSsh,
+    input.clonePreference || "https",
     input.defaultBranch,
     input.isPrivate,
     input.isFork,

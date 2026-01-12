@@ -43,6 +43,8 @@ type GitHubRepo = {
   isArchived: boolean;
   htmlUrl: string;
   cloneUrl: string;
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
   defaultBranch: string;
 };
 
@@ -87,7 +89,8 @@ const Home = () => {
         fullName: repo.fullName,
         name: repo.name,
         owner: repo.owner,
-        cloneUrl: repo.cloneUrl,
+        cloneUrlHttps: repo.cloneUrlHttps,
+        cloneUrlSsh: repo.cloneUrlSsh,
         defaultBranch: repo.defaultBranch,
         isPrivate: repo.isPrivate,
         isFork: repo.isFork,

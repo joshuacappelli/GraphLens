@@ -3,10 +3,12 @@ import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
 import { app } from "electron";
+import { homedir } from "os";
 
 import { NEPTUNE_HOME, query, queryOne } from "./db";
 import { enqueueJob, updateJobStatus } from "./jobs";
 import { getHeadSha } from "./git";
+import { ClonePreference } from "./repos";
 
 const ZOEKTS_BASE = path.join(NEPTUNE_HOME, "zoekt");
 const ZOEKTS_REPOS_DIR = path.join(ZOEKTS_BASE, "repos");
@@ -32,7 +34,9 @@ export type ZoektIndexOptions = {
   repoId: number;
   owner: string;
   name: string;
-  cloneUrl: string;
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
+  clonePreference?: ClonePreference;
   defaultBranch: string;
   branches?: string[];
   incremental?: boolean;
@@ -44,12 +48,56 @@ export type ZoektIndexResult = {
   snapshotId: number | null;
   fetchResult: CommandResult;
   indexResult?: CommandResult;
+  cloneUrlUsed: string;
 };
 
 export function ensureZoektDirectories() {
   [ZOEKTS_BASE, ZOEKTS_REPOS_DIR, ZOEKTS_INDEX_DIR].forEach((dir) => {
     fs.mkdirSync(dir, { recursive: true });
   });
+}
+
+const SSH_KEY_FILES = ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"];
+
+function normalizeSshUrl(url: string): string {
+  if (!url) return url;
+  if (url.startsWith("ssh://")) {
+    return url;
+  }
+  const match = url.match(/^([^@]+@[^:]+):(.+)$/);
+  if (match) {
+    return `ssh://${match[1]}/${match[2]}`;
+  }
+  return url;
+}
+
+function isSshConfigured(): boolean {
+  if (process.env.SSH_AUTH_SOCK) {
+    return true;
+  }
+
+  const sshDir = path.join(homedir(), ".ssh");
+  return SSH_KEY_FILES.some((key) => fs.existsSync(path.join(sshDir, key)));
+}
+
+function resolveCloneUrl(options: ZoektIndexOptions): string {
+  const normalizedSsh = options.cloneUrlSsh ? normalizeSshUrl(options.cloneUrlSsh) : "";
+  const sshPreferred = options.clonePreference === "ssh";
+  const canUseSsh = normalizedSsh && isSshConfigured();
+
+  if (sshPreferred && canUseSsh) {
+    return normalizedSsh;
+  }
+
+  if (options.cloneUrlHttps) {
+    return options.cloneUrlHttps;
+  }
+
+  if (normalizedSsh) {
+    return normalizedSsh;
+  }
+
+  throw new Error(`no clone URL available for ${options.owner}/${options.name}`);
 }
 
 function platformFolder() {
@@ -64,21 +112,57 @@ function exe(name: string) {
 }
 
 function devRoot() {
-  return app.getAppPath();
+  return app.isPackaged ? app.getAppPath() : process.cwd();
+}
+
+function findDevBinaryPath(bin: string): string | null {
+  let current = devRoot();
+  while (true) {
+    const candidate = path.join(
+      current,
+      "vendor",
+      "tooling",
+      "tools",
+      platformFolder(),
+      exe(bin)
+    );
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  return null;
 }
 
 export function getZoektPath(
   bin: "zoekt-git-clone" | "zoekt-git-index" | "zoekt-webserver"
 ) {
-  const base = app.isPackaged
-    ? path.join(process.resourcesPath, "tools", platformFolder())
-    : path.join(devRoot(), "vendor", "tooling", "tools", platformFolder());
+  const packagedBase = path.join(
+    process.resourcesPath,
+    "tools",
+    platformFolder()
+  );
+  const packagedPath = path.join(packagedBase, exe(bin));
 
-  const full = path.join(base, exe(bin));
-  if (!fs.existsSync(full)) {
-    throw new Error(`Missing Zoekt binary: ${full}`);
+  if (fs.existsSync(packagedPath)) {
+    return packagedPath;
   }
-  return full;
+
+  const devPath = findDevBinaryPath(bin);
+  if (devPath) {
+    return devPath;
+  }
+
+  console.warn(
+    `[Zoekt] Unable to locate ${bin}; checked packaged path (${packagedPath}) and source path (${devPath}).`
+  );
+  throw new Error(`Missing Zoekt binary: ${packagedPath}`);
 }
 
 function getBranchList(options: ZoektIndexOptions): string[] {
@@ -260,6 +344,11 @@ export async function indexRepositoryWithZoekt(
 
   const repoName = `${options.owner}/${options.name}`;
   const repoPath = getZoektRepoDir(options.owner, options.name);
+  const cloneUrl = resolveCloneUrl(options);
+  console.info(
+    `[Zoekt] Starting indexing for ${repoName} (${options.repoId}) default branch ${options.defaultBranch}`
+  );
+  console.info(`[Zoekt] Using clone URL ${cloneUrl}`);
   const branchList = getBranchList(options);
   const priority = options.priority ?? 100;
 
@@ -268,7 +357,7 @@ export async function indexRepositoryWithZoekt(
     message: "Cloning repository for Zoekt indexing",
   });
 
-  const fetchResult = await cloneRepoForZoekt(repoName, options.cloneUrl, options.repoId);
+  const fetchResult = await cloneRepoForZoekt(repoName, cloneUrl, options.repoId);
   if (!fetchResult.success) {
     await updateJobStatus(fetchJob.id, "FAILED", {
       error: fetchResult.stderr || "zoekt-git-clone failed",
@@ -281,6 +370,7 @@ export async function indexRepositoryWithZoekt(
   await updateJobStatus(fetchJob.id, "DONE", {
     message: "Repository ready for Zoekt indexing",
   });
+  console.info(`[Zoekt] Repository mirror prepared at ${repoPath}`);
 
   const headSha = await getHeadSha(repoPath, options.defaultBranch);
   if (!headSha) {
@@ -293,6 +383,7 @@ export async function indexRepositoryWithZoekt(
   if (!refRow) {
     throw new Error(`Failed to create repo_ref for ${repoName}`);
   }
+  console.info(`[Zoekt] Ref ${options.defaultBranch} tracked with SHA ${headSha}`);
 
   const snapshotDir = await getIndexSnapshotDir(options.owner, options.name);
   const snapshot = await insertSnapshot(
@@ -332,6 +423,9 @@ export async function indexRepositoryWithZoekt(
     message: "Zoekt index ready",
   });
 
+  console.info(
+    `[Zoekt] Index created at ${snapshotDir} (snapshot ${snapshot.id}); ${branchList.length} branch(es) indexed`
+  );
   await markSnapshotReady(snapshot.id);
   await setActiveIndex(options.repoId, refRow.id, snapshot.id);
 
@@ -339,5 +433,6 @@ export async function indexRepositoryWithZoekt(
     snapshotId: snapshot.id,
     fetchResult,
     indexResult,
+    cloneUrlUsed: cloneUrl,
   };
 }

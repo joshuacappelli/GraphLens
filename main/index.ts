@@ -288,7 +288,7 @@ ipcMain.handle("repos/fetchGitHub", async () => {
   try {
     const repos = await fetchUserRepos(savedAuth.tokens.access_token);
     
-    // Map to frontend format, prefer SSH URL for cloning
+    // Map to frontend format, include both HTTPS and SSH clone URLs
     return repos.map((repo) => ({
       id: repo.id,
       fullName: repo.full_name,
@@ -299,7 +299,9 @@ ipcMain.handle("repos/fetchGitHub", async () => {
       isFork: repo.fork,
       isArchived: repo.archived,
       htmlUrl: repo.html_url,
-      cloneUrl: repo.ssh_url, // Prefer SSH for private repos
+      cloneUrl: repo.clone_url,
+      cloneUrlHttps: repo.clone_url,
+      cloneUrlSsh: repo.ssh_url,
       defaultBranch: repo.default_branch,
     }));
   } catch (error) {
@@ -324,7 +326,9 @@ ipcMain.handle("repos/addTracked", async (_event, input: {
   fullName: string;
   name: string;
   owner: string;
-  cloneUrl: string;
+  cloneUrlHttps: string;
+  cloneUrlSsh: string;
+  clonePreference?: "https" | "ssh" | "auto";
   defaultBranch: string;
   isPrivate: boolean;
   isFork: boolean;
@@ -341,7 +345,9 @@ ipcMain.handle("repos/addTracked", async (_event, input: {
     owner: input.owner,
     name: input.name,
     fullName: input.fullName,
-    cloneUrl: input.cloneUrl,
+    cloneUrlHttps: input.cloneUrlHttps,
+    cloneUrlSsh: input.cloneUrlSsh,
+    clonePreference: input.clonePreference,
     defaultBranch: input.defaultBranch,
     isPrivate: input.isPrivate,
     isFork: input.isFork,
@@ -354,7 +360,9 @@ ipcMain.handle("repos/addTracked", async (_event, input: {
     repoId: tracked.id,
     owner: tracked.owner,
     name: tracked.name,
-    cloneUrl: tracked.cloneUrl,
+    cloneUrlHttps: tracked.cloneUrlHttps,
+    cloneUrlSsh: tracked.cloneUrlSsh,
+    clonePreference: tracked.clonePreference,
     defaultBranch: tracked.defaultBranch,
   }).catch((error) => {
     console.error(
