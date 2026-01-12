@@ -1,29 +1,40 @@
-// electron/lib/ctags.ts
-import path from "path";
-import fs from "fs";
-import { app } from "electron";
-import { platformKey } from "./platform";
+// main/tools/ctags.ts
+import { execFileSync } from "child_process";
 
-export function getBundledCtagsPath() {
-  const base = app.isPackaged
-    ? path.join(process.resourcesPath, "ctags")
-    : path.join(app.getAppPath(), "resources", "ctags");
+export function findSystemCtags(): string | null {
+  try {
+    // On most systems, universal-ctags installs as `ctags`
+    const cmd = process.platform === "win32" ? "where" : "which";
+    const out = execFileSync(cmd, ["ctags"], { stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+    if (!out) return null;
 
-  const exe = process.platform === "win32" ? "ctags.exe" : "ctags";
-  return path.join(base, platformKey(), exe);
+    // `where` can return multiple lines; choose first
+    return out.split(/\r?\n/)[0];
+  } catch {
+    return null;
+  }
 }
 
-function fileExists(p: string) {
-  try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
-}
-
-export async function ensureCtagsAvailable(): Promise<string> {
-  // 1) Prefer bundled
-  const bundled = getBundledCtagsPath();
-  if (fileExists(bundled)) return bundled;
-
-  // 2) Optional: fallback to system install (dev only)
-  //    (Not recommended for consumer UX)
-  const system = process.platform === "win32" ? "ctags.exe" : "ctags";
-  return system;
+export function getCtagsInstallHint() {
+  if (process.platform === "darwin") {
+    return {
+      title: "Install universal-ctags (macOS)",
+      command: "brew install universal-ctags",
+    };
+  }
+  if (process.platform === "win32") {
+    return {
+      title: "Install universal-ctags (Windows)",
+      command: "choco install universal-ctags  # or winget, if you prefer",
+    };
+  }
+  return {
+    title: "Install universal-ctags (Linux)",
+    command:
+      "sudo apt-get install universal-ctags  # Debian/Ubuntu\n" +
+      "sudo dnf install ctags                # Fedora (often exuberant)\n" +
+      "sudo pacman -S ctags                  # Arch (check package provides)",
+  };
 }

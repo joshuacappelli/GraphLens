@@ -51,6 +51,15 @@ bun run dev
 
 This command launches the **Vite** development server for the renderer process and opens the Electron window.
 
+When cloning the repo, you must run:
+
+git submodule update --init --recursive
+
+
+(or clone with --recurse-submodules)
+
+Otherwise vendor/zoekt will exist but be empty.
+
 ### Build for Production
 
 Generate optimized files for production:

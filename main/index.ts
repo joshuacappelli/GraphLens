@@ -29,6 +29,10 @@ import {
   type RepoSyncResult,
 } from "./lib/repos";
 import { listActiveJobs, listRecentJobs } from "./lib/jobs";
+import {
+  ensureZoektDirectories,
+  indexRepositoryWithZoekt,
+} from "./lib/zoekt";
 
 const envFilePath = join(process.cwd(), ".env");
 loadEnv({ path: envFilePath });
@@ -196,6 +200,7 @@ async function createWindow() {
 
 app.whenReady().then(() => {
   initializeDataDirectories();
+  ensureZoektDirectories();
   createWindow();
 });
 
@@ -343,7 +348,22 @@ ipcMain.handle("repos/addTracked", async (_event, input: {
     isArchived: input.isArchived,
   };
 
-  return addTrackedRepo(repoInput);
+  const tracked = await addTrackedRepo(repoInput);
+
+  void indexRepositoryWithZoekt({
+    repoId: tracked.id,
+    owner: tracked.owner,
+    name: tracked.name,
+    cloneUrl: tracked.cloneUrl,
+    defaultBranch: tracked.defaultBranch,
+  }).catch((error) => {
+    console.error(
+      `Failed to index repo ${tracked.fullName} (${tracked.id}):`,
+      error instanceof Error ? error.message : error
+    );
+  });
+
+  return tracked;
 });
 
 // Remove a repo from tracked list

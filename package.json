@@ -5,7 +5,7 @@
         "email": "ra1nux.01@gmail.com"
     },
     "version": "0.0.0",
-    "main": "electron/electron.ts",
+    "main": "app/index.js",
     "scripts": {
         "dev": "vite",
         "build:electron": "bun ./esbuild.config.mjs",
@@ -18,7 +18,10 @@
         "start": "electronmon ./app",
         "electron:vite:build": "concurrently \"cross-env BROWSER=none bun dev\" \"wait-on http://localhost:5173 && bun build:dev:electron\"",
         "electron:dev": "concurrently \"bun electron:vite:build\" \"bun start\"",
-        "dist": "npm run build && electron-builder --config electron-builder.config.js -w",
+        "dist:mac": "npm run build && electron-builder --config electron-builder.config.js -m",
+        "dist:win": "npm run build && electron-builder --config electron-builder.config.js -w",
+        "dist:linux": "npm run build && electron-builder --config electron-builder.config.js -l",
+        "dist": "npm run dist:mac",
         "migrate:up": "node-pg-migrate up",
         "migrate:down": "node-pg-migrate down"
     },
@@ -81,6 +84,13 @@
         "files": [
             "dist/**/*",
             "electron/**/*"
+        ],
+        "extraResources": [
+            {
+                "from": "vendor/tooling/tools/",
+                "to": "tools/",
+                "filter": ["**/*"]
+            }
         ],
         "directories": {
             "buildResources": "assets",
