@@ -45,6 +45,25 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let isActive = true;
+    if (!window.electron) return;
+
+    const checkStatus = async () => {
+      const stored = await window.electron.getAuthStatus();
+      if (isActive && stored) {
+        setAuthState(stored);
+        setIsAuthenticating(false);
+        setAuthError(null);
+      }
+    };
+
+    void checkStatus();
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
   // Fetch user info when auth state changes
   useEffect(() => {
     if (authState && window.electron) {
@@ -101,13 +120,21 @@ function App() {
       return <SearchPage onClose={() => setPage("home")} />;
     }
 
-    return <Home onSearchClick={() => setPage("search")} />;
+    return <Home />;
   };
 
   return (
     <main className="h-screen flex flex-col font-[roboto] font-bold bg-[#f7f7f7] dark:bg-main-light text-white">
       <Header />
-      {authState && <AppBar isLoggedIn={!!authState} userInfo={userInfo} onLogout={handleLogout} />}
+      {authState && (
+        <AppBar
+          isLoggedIn={!!authState}
+          userInfo={userInfo}
+          onLogout={handleLogout}
+          onHome={() => setPage("home")}
+          onSearch={() => setPage("search")}
+        />
+      )}
       {renderContent()}
     </main>
   );

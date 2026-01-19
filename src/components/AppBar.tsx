@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import {
+  Home,
   Search,
   MessageSquare,
   FolderGit2,
@@ -23,6 +24,7 @@ type AppBarProps = {
   onSearch?: () => void;
   onAsk?: () => void;
   onRepositories?: () => void;
+  onHome?: () => void;
 };
 
 const AppBar = ({
@@ -32,6 +34,7 @@ const AppBar = ({
   onSearch,
   onAsk,
   onRepositories,
+  onHome,
 }: AppBarProps) => {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -54,6 +57,8 @@ const AppBar = ({
 
       {/* LEFT */}
       <div className="flex items-center gap-1 no-drag">
+        
+        <AppBarButton icon={<Home size={14} />} label="Home" onClick={onHome} />
         <AppBarButton icon={<Search size={14} />} label="Search" onClick={onSearch} />
         <AppBarButton icon={<MessageSquare size={14} />} label="Ask" onClick={onAsk} />
         <AppBarButton icon={<FolderGit2 size={14} />} label="Repositories" onClick={onRepositories} />

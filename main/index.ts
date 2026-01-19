@@ -247,6 +247,10 @@ ipcMain.handle("auth/start", async () => {
   return startAuthFlow(mainWindow);
 });
 
+ipcMain.handle("auth/status", async () => {
+  return loadSavedAuth();
+});
+
 ipcMain.handle("auth/logout", async () => {
   await keytar.deletePassword(KEYTAR_SERVICE_NAME, TOKEN_KEY);
   await keytar.deletePassword(KEYTAR_SERVICE_NAME, IDENTIFIER_KEY);

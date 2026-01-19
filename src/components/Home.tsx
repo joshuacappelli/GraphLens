@@ -55,11 +55,9 @@ const statusConfig: Record<RepoStatus, { label: string; color: string; bg: strin
   failed: { label: "Failed", color: "text-red-400", bg: "bg-red-500/20" },
 };
 
-type HomeProps = {
-  onSearchClick: () => void;
-};
+type HomeProps = {};
 
-const Home = ({ onSearchClick }: HomeProps) => {
+const Home = ({}: HomeProps) => {
   const [repos, setRepos] = useState<TrackedRepo[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -189,13 +187,6 @@ const Home = ({ onSearchClick }: HomeProps) => {
           </p>
         </div>
         <div className="flex gap-3">
-          <button
-            onClick={onSearchClick}
-            className="flex items-center gap-2 rounded-xl border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:border-blue-400"
-          >
-            <Search size={14} />
-            Search
-          </button>
           <button
             onClick={() => setModalOpen(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition"

@@ -133,6 +133,8 @@ export const api = {
   startAuth: () => ipcRenderer.invoke("auth/start") as Promise<AuthSuccessPayload>,
   logout: () => ipcRenderer.invoke("auth/logout") as Promise<boolean>,
   getUserInfo: () => ipcRenderer.invoke("auth/getUserInfo") as Promise<GitHubUserInfo | null>,
+  getAuthStatus: () =>
+    ipcRenderer.invoke("auth/status") as Promise<AuthSuccessPayload | null>,
   onAuthSuccess: (callback: (payload: AuthSuccessPayload) => void) => {
     const listener = (_event: IpcRendererEvent, payload: AuthSuccessPayload) => callback(payload);
     ipcRenderer.on(AUTH_SUCCESS_CHANNEL, listener);
