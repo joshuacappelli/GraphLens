@@ -11,6 +11,7 @@ export default {
           base: '#24273A',
           mantle: '#1E2030',
           crust: '#181926',
+          crustLight: '#222831',
         }
       }
     }

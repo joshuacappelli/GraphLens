@@ -123,6 +123,8 @@ async function startAuthFlow(parent: BrowserWindow): Promise<AuthStorage> {
     modal: true,
     show: false,
     autoHideMenuBar: true,
+    titleBarStyle: 'hiddenInset', // Required for custom positioning
+    trafficLightPosition: { x: 15, y: 11 },
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -161,7 +163,8 @@ async function createWindow() {
     height: 600,
     minWidth: 800,
     minHeight: 600,
-    titleBarStyle: "hidden",
+    titleBarStyle: 'hiddenInset', // Required for custom positioning
+    trafficLightPosition: { x: 15, y: 11 },
     icon: path.join(__dirname, "renderer", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -413,6 +416,7 @@ type ZoektSearchHandlerOptions = {
   case?: "yes" | "no";
   context?: number;
   num?: number;
+  pattern?: "literal" | "regexp";
 };
 
 ipcMain.handle("zoekt/search", async (_event, options: ZoektSearchHandlerOptions) => {
@@ -426,7 +430,7 @@ ipcMain.handle("zoekt/search", async (_event, options: ZoektSearchHandlerOptions
   searchUrl.searchParams.set("q", options.query.trim());
   searchUrl.searchParams.set("format", "json");
   searchUrl.searchParams.set("num", String(options.num ?? options.limit ?? 25));
-  searchUrl.searchParams.set("pattern", "literal");
+  searchUrl.searchParams.set("pattern", options.pattern ?? "literal");
   if (options.repo) {
     searchUrl.searchParams.set("repo", options.repo);
   }

@@ -164,6 +164,7 @@ export const api = {
     case?: "yes" | "no";
     context?: number;
     num?: number;
+    pattern?: "literal" | "regexp";
   }) => ipcRenderer.invoke("zoekt/search", options) as Promise<ZoektSearchResponse>,
 };
 

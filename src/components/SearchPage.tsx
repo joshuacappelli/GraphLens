@@ -1,5 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import ZoektSearch from "./ZoektSearch";
+import { Regex, CaseSensitive } from "lucide-react";
 
 const SearchPage = () => {
   const [query, setQuery] = useState("");
@@ -9,6 +10,7 @@ const SearchPage = () => {
   const [numResults, setNumResults] = useState(50);
   const [searchTrigger, setSearchTrigger] = useState(0);
   const [repoSuggestions, setRepoSuggestions] = useState<Set<string>>(new Set());
+  const [useRegex, setUseRegex] = useState(false);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -21,33 +23,40 @@ const SearchPage = () => {
   );
 
   return (
-    <section className="flex-1 overflow-auto flex flex-col items-center justify-start px-6 py-8">
-      <div className="sticky top-4 z-20 w-full max-w-3xl rounded-3xl border border-white/5 bg-slate-950/80 p-4 shadow-2xl shadow-black/20 backdrop-blur">
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search code across indexed repos"
-            className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-          />
-          <button
-            type="submit"
-            className="flex-shrink-0 rounded-xl bg-blue-500 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-blue-600 disabled:opacity-60"
-          >
-            Search
-          </button>
+    <section className="flex-1 flex flex-col items-center justify-start py-8">
+      <div className="sticky top-0 z-20 w-full border border-white/5 bg-slate-950/80 p-4 shadow-2xl shadow-black/20 backdrop-blur">
+        <form onSubmit={handleSubmit} className="flex">
+          <div className="relative flex-1">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search code across indexed repos"
+              className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 pr-32 text-sm text-white focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+            />
+            <div className="absolute inset-y-0 right-0 flex items-center gap-2 pr-3">
+              <label className="flex cursor-pointer items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] uppercase tracking-[0.2em] text-slate-500 transition hover:border-blue-400 hover:text-white">
+                <input
+                  type="checkbox"
+                  checked={caseSensitive}
+                  onChange={(event) => setCaseSensitive(event.target.checked)}
+                  className="h-3 w-3 rounded border border-white/20 bg-transparent accent-blue-400"
+                />
+                <CaseSensitive size={16} />
+              </label>
+              <label className="flex cursor-pointer items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] uppercase tracking-[0.2em] text-slate-500 transition hover:border-blue-400 hover:text-white">
+                <input
+                  type="checkbox"
+                  checked={useRegex}
+                  onChange={(event) => setUseRegex(event.target.checked)}
+                  className="h-3 w-3 rounded border border-white/20 bg-transparent accent-blue-400"
+                />
+                <Regex size={16} />
+              </label>
+            </div>
+          </div>
         </form>
 
         <div className="mt-3 grid gap-3 text-xs text-slate-400 md:grid-cols-3">
-          <label className="flex flex-col text-[10px] uppercase tracking-wide">
-            Case sensitive?
-            <input
-              type="checkbox"
-              checked={caseSensitive}
-              onChange={(event) => setCaseSensitive(event.target.checked)}
-              className="ml-1 mt-1 accent-blue-400"
-            />
-          </label>
           <label className="flex flex-col text-[10px] uppercase tracking-wide">
             Repo filter
             <input
@@ -103,6 +112,7 @@ const SearchPage = () => {
           contextLines={contextLines}
           numResults={numResults}
           searchTrigger={searchTrigger}
+          patternMode={useRegex ? "regexp" : "literal"}
           onRepoSuggestionsUpdate={(repos) =>
             setRepoSuggestions(new Set(repos))
           }

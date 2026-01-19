@@ -142,6 +142,7 @@ type ZoektSearchProps = {
   contextLines: number;
   numResults: number;
   searchTrigger: number;
+  patternMode: "literal" | "regexp";
   onRepoSuggestionsUpdate?: (repos: string[]) => void;
 };
 
@@ -152,6 +153,7 @@ const ZoektSearch = ({
   contextLines,
   numResults,
   searchTrigger,
+  patternMode,
   onRepoSuggestionsUpdate,
 }: ZoektSearchProps) => {
   const [results, setResults] = useState<FileResult[]>([]);
@@ -181,6 +183,7 @@ const ZoektSearch = ({
           context: contextLines,
           case: caseSensitive ? "yes" : "no",
           repo: repoFilter || undefined,
+          pattern: patternMode ?? "literal",
         });
         const payload = (response.result ?? response) as ZoektSearchResultPayload;
         const snippetMap: Record<string, string> =
