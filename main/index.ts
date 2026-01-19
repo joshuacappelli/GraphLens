@@ -239,6 +239,10 @@ ipcMain.on("app/close", () => {
   app.quit();
 });
 
+ipcMain.handle("app/getCurrentDirectory", () => {
+  return process.cwd();
+});
+
 ipcMain.handle("auth/start", async () => {
   if (!mainWindow) {
     throw new Error("Main window is not initialized yet.");

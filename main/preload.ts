@@ -133,6 +133,7 @@ export const api = {
   startAuth: () => ipcRenderer.invoke("auth/start") as Promise<AuthSuccessPayload>,
   logout: () => ipcRenderer.invoke("auth/logout") as Promise<boolean>,
   getUserInfo: () => ipcRenderer.invoke("auth/getUserInfo") as Promise<GitHubUserInfo | null>,
+  getCurrentDirectory: () => ipcRenderer.invoke("app/getCurrentDirectory") as Promise<string>,
   getAuthStatus: () =>
     ipcRenderer.invoke("auth/status") as Promise<AuthSuccessPayload | null>,
   onAuthSuccess: (callback: (payload: AuthSuccessPayload) => void) => {

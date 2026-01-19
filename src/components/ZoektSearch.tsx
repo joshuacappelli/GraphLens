@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { useEffect, useState } from "react";
 
 type ZoektSearchMatch = {
   Repository?: string;
@@ -135,149 +135,100 @@ const formatSnippet = (match: ZoektSearchMatch) => {
   return "";
 };
 
-const ZoektSearch = () => {
-  const [query, setQuery] = useState("");
+type ZoektSearchProps = {
+  query: string;
+  caseSensitive: boolean;
+  repoFilter: string;
+  contextLines: number;
+  numResults: number;
+  searchTrigger: number;
+  onRepoSuggestionsUpdate?: (repos: string[]) => void;
+};
+
+const ZoektSearch = ({
+  query,
+  caseSensitive,
+  repoFilter,
+  contextLines,
+  numResults,
+  searchTrigger,
+  onRepoSuggestionsUpdate,
+}: ZoektSearchProps) => {
   const [results, setResults] = useState<FileResult[]>([]);
   const [count, setCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [caseSensitive, setCaseSensitive] = useState(false);
-  const [repoFilter, setRepoFilter] = useState("");
-  const [contextLines, setContextLines] = useState(2);
-  const [numResults, setNumResults] = useState(50);
-  const [repoSuggestions, setRepoSuggestions] = useState<Set<string>>(new Set());
 
-  const search = async (event?: FormEvent<HTMLFormElement>) => {
-    event?.preventDefault();
+  useEffect(() => {
     if (!query.trim()) {
       setResults([]);
       setCount(null);
+      onRepoSuggestionsUpdate?.([]);
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    try {
-      const trimmedQuery = query.trim();
-      const response = await window.electron.searchZoekt({
-        query: trimmedQuery,
-        num: numResults,
-        context: contextLines,
-        case: caseSensitive ? "yes" : "no",
-        repo: repoFilter || undefined,
-      });
-      console.debug("[Zoekt] raw payload", response);
-      const payload = (response.result ?? response) as ZoektSearchResultPayload;
-      const snippetMap = (response as { snippets?: Record<string, string> }).snippets ?? {};
-      const normalized = normalizeMatches(payload, snippetMap, trimmedQuery);
-      normalized.forEach((match) =>
-        console.debug("[Zoekt] normalized file result", match)
-      );
-      setResults(normalized);
-      const stats = payload.Stats ?? payload.result?.Stats;
-      setCount(payload.total ?? stats?.MatchCount ?? normalized.length);
-      const repos = new Set(repoSuggestions);
-      normalized.forEach((fileResult) => {
-        if (fileResult.repository) {
-          repos.add(fileResult.repository);
+    let cancelled = false;
+    const trimmedQuery = query.trim();
+
+    const performSearch = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const response = await window.electron.searchZoekt({
+          query: trimmedQuery,
+          num: numResults,
+          context: contextLines,
+          case: caseSensitive ? "yes" : "no",
+          repo: repoFilter || undefined,
+        });
+        const payload = (response.result ?? response) as ZoektSearchResultPayload;
+        const snippetMap: Record<string, string> =
+          (response as { snippets?: Record<string, string> }).snippets ?? {};
+        const normalized = normalizeMatches(payload, snippetMap, trimmedQuery);
+
+        if (cancelled) return;
+
+        setResults(normalized);
+        const stats = payload.Stats ?? payload.result?.Stats;
+        setCount(payload.total ?? stats?.MatchCount ?? normalized.length);
+        const repos = Array.from(new Set(normalized.map((m) => m.repository)));
+        onRepoSuggestionsUpdate?.(repos);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Search failed");
+        setResults([]);
+        setCount(null);
+        onRepoSuggestionsUpdate?.([]);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
         }
-      });
-      setRepoSuggestions(repos);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Search failed");
-      setResults([]);
-      setCount(null);
-    } finally {
-      setLoading(false);
-    }
-  };
+      }
+    };
+
+    void performSearch();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTrigger]);
 
   const matchedPreview = results;
 
   return (
     <div className="w-full max-w-3xl">
-      <div className="sticky top-4 z-20 w-full rounded-3xl border border-white/5 bg-slate-950/80 p-4 shadow-2xl shadow-black/20 backdrop-blur">
-        <form onSubmit={search} className="flex gap-2">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search code across indexed repos"
-            className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-          />
-          <button
-            type="submit"
-            className="flex-shrink-0 rounded-xl bg-blue-500 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-blue-600 disabled:opacity-60"
-            disabled={loading}
-          >
-            {loading ? "Searching…" : "Search"}
-          </button>
-        </form>
-
-        <div className="mt-3 grid gap-3 text-xs text-slate-400 md:grid-cols-3">
-          <label className="flex flex-col text-[10px] uppercase tracking-wide">
-            Case sensitive?
-            <input
-              type="checkbox"
-              checked={caseSensitive}
-              onChange={(event) => setCaseSensitive(event.target.checked)}
-              className="ml-1 mt-1 accent-blue-400"
-            />
-          </label>
-          <label className="flex flex-col text-[10px] uppercase tracking-wide">
-            Repo filter
-            <input
-              list="repo-options"
-              value={repoFilter}
-              onChange={(event) => setRepoFilter(event.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-[#0f172a]/60 px-2 py-1 text-xs text-white focus:outline-none"
-            />
-            <datalist id="repo-options">
-              {[...repoSuggestions].map((repo) => (
-                <option key={repo} value={repo} />
-              ))}
-            </datalist>
-          </label>
-          <label className="flex flex-col text-[10px] uppercase tracking-wide">
-            Context lines
-            <input
-              type="number"
-              min={1}
-              max={5}
-              value={contextLines}
-              onChange={(event) =>
-                setContextLines(Math.max(1, Math.min(5, Number(event.target.value) || 1)))
-              }
-              className="w-full rounded-xl border border-white/10 bg-[#0f172a]/60 px-2 py-1 text-xs text-white focus:outline-none"
-            />
-          </label>
-          <label className="flex flex-col text-[10px] uppercase tracking-wide">
-            Results
-            <input
-              type="number"
-              min={10}
-              max={200}
-              value={numResults}
-              onChange={(event) =>
-                setNumResults(Math.max(10, Math.min(200, Number(event.target.value) || 50)))
-              }
-              className="w-full rounded-xl border border-white/10 bg-[#0f172a]/60 px-2 py-1 text-xs text-white focus:outline-none"
-            />
-          </label>
+      {error && (
+        <div className="mt-3 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300">
+          {error}
         </div>
-
-        {error && (
-          <div className="mt-3 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300">
-            {error}
-          </div>
-        )}
-
-        {count !== null && (
-          <div className="mt-3 text-xs uppercase tracking-wide text-slate-400">
-            {count} result{count === 1 ? "" : "s"}
-          </div>
-        )}
-      </div>
-
+      )}
+      {count !== null && (
+        <div className="mt-3 text-xs uppercase tracking-wide text-slate-400">
+          {count} result{count === 1 ? "" : "s"}
+        </div>
+      )}
       <div className="mt-4 space-y-3">
         {matchedPreview.map((fileResult, fileIndex) => (
           <div
