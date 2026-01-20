@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useState } from "react";
 import ZoektSearch from "./ZoektSearch";
 import { Regex, CaseSensitive, X } from "lucide-react";
 import Tooltip from "./Tooltip";
@@ -6,22 +6,13 @@ import Tooltip from "./Tooltip";
 const SearchPage = () => {
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
-  const [repoFilter, setRepoFilter] = useState("");
-  const [contextLines, setContextLines] = useState(2);
-  const [numResults, setNumResults] = useState(50);
   const [searchTrigger, setSearchTrigger] = useState(0);
-  const [repoSuggestions, setRepoSuggestions] = useState<Set<string>>(new Set());
   const [useRegex, setUseRegex] = useState(false);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSearchTrigger((prev) => prev + 1);
   };
-
-  const suggestionList = useMemo(
-    () => [...repoSuggestions].sort(),
-    [repoSuggestions]
-  );
 
   return (
     <section className="flex-1 flex flex-col items-center justify-start py-8">
@@ -76,67 +67,14 @@ const SearchPage = () => {
             </div>
           </div>
         </form>
-
-        <div className="mt-3 grid gap-3 text-xs text-slate-400 md:grid-cols-3">
-          <label className="flex flex-col text-[10px] uppercase tracking-wide">
-            Repo filter
-            <input
-              list="repo-options"
-              value={repoFilter}
-              onChange={(event) => setRepoFilter(event.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-[#0f172a]/60 px-2 py-1 text-xs text-white focus:outline-none"
-            />
-            <datalist id="repo-options">
-              {suggestionList.map((repo) => (
-                <option key={repo} value={repo} />
-              ))}
-            </datalist>
-          </label>
-          <label className="flex flex-col text-[10px] uppercase tracking-wide">
-            Context lines
-            <input
-              type="number"
-              min={1}
-              max={5}
-              value={contextLines}
-              onChange={(event) =>
-                setContextLines(
-                  Math.max(1, Math.min(5, Number(event.target.value) || 1))
-                )
-              }
-              className="w-full rounded-xl border border-white/10 bg-[#0f172a]/60 px-2 py-1 text-xs text-white focus:outline-none"
-            />
-          </label>
-          <label className="flex flex-col text-[10px] uppercase tracking-wide">
-            Results
-            <input
-              type="number"
-              min={10}
-              max={200}
-              value={numResults}
-              onChange={(event) =>
-                setNumResults(
-                  Math.max(10, Math.min(200, Number(event.target.value) || 50))
-                )
-              }
-              className="w-full rounded-xl border border-white/10 bg-[#0f172a]/60 px-2 py-1 text-xs text-white focus:outline-none"
-            />
-          </label>
-        </div>
       </div>
 
       <div className="mt-6 w-full max-w-3xl">
         <ZoektSearch
           query={query}
           caseSensitive={caseSensitive}
-          repoFilter={repoFilter}
-          contextLines={contextLines}
-          numResults={numResults}
           searchTrigger={searchTrigger}
           patternMode={useRegex ? "regexp" : "literal"}
-          onRepoSuggestionsUpdate={(repos) =>
-            setRepoSuggestions(new Set(repos))
-          }
         />
       </div>
     </section>

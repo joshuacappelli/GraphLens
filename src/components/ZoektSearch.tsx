@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getLanguageName } from "../lib/languages";
 
 type ZoektSearchMatch = {
   Repository?: string;
@@ -6,6 +7,8 @@ type ZoektSearchMatch = {
   FileName?: string;
   Line?: number;
   LineNum?: number;
+  Before?: string;
+  After?: string;
   Fragments?: (string | { Pre?: string; Match?: string; Post?: string })[];
   Summary?: (string | { Pre?: string; Match?: string; Post?: string })[];
   Language?: string;
@@ -20,11 +23,13 @@ type ZoektSearchResultPayload = {
   Matches?: ZoektSearchMatch[];
   FileMatches?: ZoektSearchMatch[];
   total?: number;
-  Stats?: { MatchCount?: number };
+  Duration?: number;
+  Stats?: { MatchCount?: number; Duration?: number };
   result?: {
     Matches?: ZoektSearchMatch[];
     FileMatches?: ZoektSearchMatch[];
-    Stats?: { MatchCount?: number };
+    Duration?: number;
+    Stats?: { MatchCount?: number; Duration?: number };
   };
 };
 
@@ -112,60 +117,71 @@ const normalizeMatches = (
   return Array.from(fileMap.values());
 };
 
-const formatFragment = (fragment: string | { Pre?: string; Match?: string; Post?: string }) => {
-  const raw =
-    typeof fragment === "string"
-      ? fragment
-      : `${fragment.Pre ?? ""}<mark>${fragment.Match ?? ""}</mark>${fragment.Post ?? ""}`;
-  return raw.trim().replace(/\n/g, "<br />");
-};
-
-const formatSnippet = (match: ZoektSearchMatch) => {
-  const rawFragments = match.Fragments?.filter(Boolean) ?? match.Summary?.filter(Boolean);
-  if (rawFragments && rawFragments.length > 0) {
-    const formatted = rawFragments.map(formatFragment);
-    console.info(`[Zoekt] snippet fragments for ${match.FileName}`, formatted);
-    return formatted.join(" … ");
-  }
-  if (typeof match.Line === "number") {
-    console.info(`[Zoekt] snippet fallback literal line ${match.Line}`, match);
-    return `line ${match.Line}`;
-  }
-  console.warn("[Zoekt] no fragments available for match", match);
-  return "";
-};
-
 type ZoektSearchProps = {
   query: string;
   caseSensitive: boolean;
-  repoFilter: string;
-  contextLines: number;
-  numResults: number;
   searchTrigger: number;
   patternMode: "literal" | "regexp";
-  onRepoSuggestionsUpdate?: (repos: string[]) => void;
 };
+
+// Chevron icon component
+const ChevronIcon = ({ expanded, className = "" }: { expanded: boolean; className?: string }) => (
+  <svg
+    className={`w-4 h-4 transition-transform duration-200 ${expanded ? "rotate-90" : ""} ${className}`}
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    strokeWidth={2}
+  >
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+  </svg>
+);
 
 const ZoektSearch = ({
   query,
   caseSensitive,
-  repoFilter,
-  contextLines,
-  numResults,
   searchTrigger,
   patternMode,
-  onRepoSuggestionsUpdate,
 }: ZoektSearchProps) => {
   const [results, setResults] = useState<FileResult[]>([]);
   const [count, setCount] = useState<number | null>(null);
+  const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Track expanded state for files and matches
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+  const [expandedMatches, setExpandedMatches] = useState<Set<string>>(new Set());
+
+  const toggleFile = (fileKey: string) => {
+    setExpandedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileKey)) {
+        next.delete(fileKey);
+      } else {
+        next.add(fileKey);
+      }
+      return next;
+    });
+  };
+
+  const toggleMatch = (matchKey: string) => {
+    setExpandedMatches((prev) => {
+      const next = new Set(prev);
+      if (next.has(matchKey)) {
+        next.delete(matchKey);
+      } else {
+        next.add(matchKey);
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
       setCount(null);
-      onRepoSuggestionsUpdate?.([]);
+      setDurationSeconds(null);
       return;
     }
 
@@ -179,12 +195,11 @@ const ZoektSearch = ({
       try {
         const response = await window.electron.searchZoekt({
           query: trimmedQuery,
-          num: numResults,
-          context: contextLines,
+          context: 2,
           case: caseSensitive ? "yes" : "no",
-          repo: repoFilter || undefined,
           pattern: patternMode ?? "literal",
         });
+        console.log("[Zoekt] raw HTTP response", response);
         const payload = (response.result ?? response) as ZoektSearchResultPayload;
         const snippetMap: Record<string, string> =
           (response as { snippets?: Record<string, string> }).snippets ?? {};
@@ -195,14 +210,35 @@ const ZoektSearch = ({
         setResults(normalized);
         const stats = payload.Stats ?? payload.result?.Stats;
         setCount(payload.total ?? stats?.MatchCount ?? normalized.length);
-        const repos = Array.from(new Set(normalized.map((m) => m.repository)));
-        onRepoSuggestionsUpdate?.(repos);
+        
+        // Duration is in nanoseconds, convert to seconds
+        const durationNs = payload.Duration ?? payload.result?.Duration ?? stats?.Duration;
+        if (durationNs !== undefined) {
+          setDurationSeconds(durationNs / 1_000_000_000);
+        } else {
+          setDurationSeconds(null);
+        }
+        
+        // Expand all files and matches by default
+        const fileKeys = new Set<string>();
+        const matchKeys = new Set<string>();
+        normalized.forEach((file, fileIndex) => {
+          const fileKey = `${file.repository}-${file.fileName}-${fileIndex}`;
+          fileKeys.add(fileKey);
+          file.matches.forEach((match, matchIndex) => {
+            const lineNum = match.LineNum ?? match.Line ?? 1;
+            const matchKey = `${fileKey}-${lineNum}-${matchIndex}`;
+            matchKeys.add(matchKey);
+          });
+        });
+        setExpandedFiles(fileKeys);
+        setExpandedMatches(matchKeys);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Search failed");
         setResults([]);
         setCount(null);
-        onRepoSuggestionsUpdate?.([]);
+        setDurationSeconds(null);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -230,60 +266,163 @@ const ZoektSearch = ({
       {count !== null && (
         <div className="mt-3 text-xs uppercase tracking-wide text-slate-400">
           {count} result{count === 1 ? "" : "s"}
+          {durationSeconds !== null && (
+            <span className="ml-2 text-slate-500">
+              in {durationSeconds < 0.01 ? "<0.01" : durationSeconds.toFixed(2)}s
+            </span>
+          )}
         </div>
       )}
       <div className="mt-4 space-y-3">
-        {matchedPreview.map((fileResult, fileIndex) => (
-          <div
-            key={`${fileResult.repository}-${fileResult.fileName}-${fileIndex}`}
-            className="rounded-2xl border border-white/5 bg-white/[0.02] p-4 text-sm text-slate-100"
-          >
-            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-              <span className="font-semibold text-white truncate">{fileResult.repository}</span>
-              <span>/{fileResult.fileName}</span>
-              {fileResult.language && <span className="uppercase">{fileResult.language}</span>}
-              {fileResult.branches && fileResult.branches.length > 0 && (
-                <span className="px-2 py-0.5 rounded-full bg-white/5">
-                  {fileResult.branches.join(", ")}
+        {matchedPreview.map((fileResult, fileIndex) => {
+          const fileKey = `${fileResult.repository}-${fileResult.fileName}-${fileIndex}`;
+          const isFileExpanded = expandedFiles.has(fileKey);
+          
+          return (
+            <div
+              key={fileKey}
+              className="rounded-2xl border border-white/5 bg-white/[0.02] text-sm text-slate-100 overflow-hidden"
+            >
+              <button
+                onClick={() => toggleFile(fileKey)}
+                className="w-full p-4 flex items-center gap-3 text-xs text-slate-500 hover:bg-white/[0.02] transition-colors text-left"
+              >
+                <ChevronIcon expanded={isFileExpanded} className="text-slate-500 flex-shrink-0" />
+                <span className="font-semibold text-white truncate">{fileResult.repository}</span>
+                <span className="truncate">/{fileResult.fileName}</span>
+                {fileResult.language && <span className="flex-shrink-0">{getLanguageName(fileResult.language)}</span>}
+                {fileResult.branches && fileResult.branches.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-white/5 flex-shrink-0">
+                    {fileResult.branches.join(", ")}
+                  </span>
+                )}
+                <span className="ml-auto text-slate-600 flex-shrink-0">
+                  {fileResult.matches.length} match{fileResult.matches.length === 1 ? "" : "es"}
                 </span>
+              </button>
+              {isFileExpanded && (
+                <div className="px-4 pb-4">
+                  {fileResult.matches.map((match, matchIndex) => {
+                    const lineNum = match.LineNum ?? match.Line ?? 1;
+                    const matchKey = `${fileKey}-${lineNum}-${matchIndex}`;
+                    const isMatchExpanded = expandedMatches.has(matchKey);
+                    
+                    // Split and clean before lines, removing trailing empty line
+                    const rawBeforeLines = match.Before?.split("\n") ?? [];
+                    const beforeLines = rawBeforeLines.length > 0 && rawBeforeLines[rawBeforeLines.length - 1] === ""
+                      ? rawBeforeLines.slice(0, -1)
+                      : rawBeforeLines;
+                    // Split and clean after lines, removing leading empty line if After starts with newline
+                    const rawAfterLines = match.After?.split("\n") ?? [];
+                    const afterLines = rawAfterLines.length > 0 && rawAfterLines[0] === ""
+                      ? rawAfterLines.slice(1)
+                      : rawAfterLines;
+                    
+                    // Get the first fragment for the match line display
+                    const fragments = match.Fragments ?? [];
+                    const firstFragment = fragments[0];
+                    const fragmentData = typeof firstFragment === "object" ? firstFragment : null;
+                    
+                    // Calculate starting line for before context
+                    const beforeStartLine = lineNum - beforeLines.length;
+                    // After starts at the match line + 1
+                    const afterStartLine = lineNum + 1;
+
+                    const hasContext = beforeLines.length > 0 || afterLines.length > 0 || fragmentData;
+
+                    // Find max line number for consistent gutter width
+                    const maxLineNum = Math.max(
+                      beforeStartLine + beforeLines.length - 1,
+                      afterStartLine + afterLines.length - 1,
+                      lineNum
+                    );
+                    const gutterWidth = String(maxLineNum).length;
+
+                    return (
+                      <div key={matchKey} className="mt-3">
+                        <button
+                          onClick={() => toggleMatch(matchKey)}
+                          className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-slate-400 hover:text-slate-300 transition-colors"
+                        >
+                          <ChevronIcon expanded={isMatchExpanded} className="w-3 h-3" />
+                          {lineNum !== undefined && <span>line {lineNum}</span>}
+                          {match.Language && <span>• {getLanguageName(match.Language)}</span>}
+                          {fragmentData?.Match && (
+                            <span className="normal-case text-yellow-400/70 font-mono">
+                              "{fragmentData.Match}"
+                            </span>
+                          )}
+                        </button>
+                        {isMatchExpanded && hasContext ? (
+                          <div className="mt-1 rounded-lg border border-white/10 bg-[#0d1117] overflow-hidden font-mono text-xs">
+                            {/* Before context */}
+                            {beforeLines.map((line, i) => {
+                              const ln = beforeStartLine + i;
+                              return (
+                                <div key={`before-${ln}`} className="flex">
+                                  <span 
+                                    className="select-none text-slate-600 bg-[#161b22] px-2 py-0.5 text-right border-r border-white/5"
+                                    style={{ minWidth: `${gutterWidth + 2}ch` }}
+                                  >
+                                    {ln}
+                                  </span>
+                                  <span className="text-slate-500 px-3 py-0.5 flex-1 whitespace-pre overflow-x-auto">
+                                    {line}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                            {/* Match line with fragment */}
+                            <div className="flex bg-yellow-500/10 border-l-2 border-yellow-500">
+                              <span 
+                                className="select-none text-yellow-400 bg-yellow-500/20 px-2 py-0.5 text-right border-r border-yellow-500/20"
+                                style={{ minWidth: `${gutterWidth + 2}ch` }}
+                              >
+                                {lineNum}
+                              </span>
+                              <span className="px-3 py-0.5 flex-1 whitespace-pre overflow-x-auto">
+                                {fragmentData ? (
+                                  <>
+                                    <span className="text-slate-300">{fragmentData.Pre ?? ""}</span>
+                                    <mark className="bg-yellow-500/40 text-yellow-100 rounded px-0.5">
+                                      {fragmentData.Match ?? ""}
+                                    </mark>
+                                    <span className="text-slate-300">{(fragmentData.Post ?? "").split("\n")[0]}</span>
+                                  </>
+                                ) : (
+                                  <span className="text-yellow-200">← match</span>
+                                )}
+                              </span>
+                            </div>
+                            {/* After context */}
+                            {afterLines.map((line, i) => {
+                              const ln = afterStartLine + i;
+                              return (
+                                <div key={`after-${ln}`} className="flex">
+                                  <span 
+                                    className="select-none text-slate-600 bg-[#161b22] px-2 py-0.5 text-right border-r border-white/5"
+                                    style={{ minWidth: `${gutterWidth + 2}ch` }}
+                                  >
+                                    {ln}
+                                  </span>
+                                  <span className="text-slate-500 px-3 py-0.5 flex-1 whitespace-pre overflow-x-auto">
+                                    {line}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : isMatchExpanded ? (
+                          <p className="mt-1 text-xs text-slate-500">no preview available</p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
-            {fileResult.matches.map((match, matchIndex) => (
-              <div key={`${match.FileName}-${match.Line}-${matchIndex}`} className="mt-3">
-                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-slate-400">
-                  {match.Line !== undefined && <span>line {match.Line}</span>}
-                  {match.Language && <span>{match.Language}</span>}
-                </div>
-                <p
-                  className="mt-1 text-xs text-slate-300"
-                  dangerouslySetInnerHTML={{
-                    __html:
-                      match.ContextSnippet ||
-                      formatSnippet(match) ||
-                      "no preview available",
-                  }}
-                />
-                {match.Fragments && match.Fragments.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2 text-[10px] uppercase tracking-wide text-blue-300">
-                {match.Fragments.slice(0, 3).map((fragment, fragmentIndex) => {
-                  const html = formatFragment(fragment);
-                  const text = html.replace(/<[^>]+>/g, "");
-                  const truncated = text.length > 800 ? `${text.slice(0, 797)}…` : text;
-                  return (
-                    <span
-                      key={`${match.FileName}-${match.Line}-${fragmentIndex}`}
-                      className="rounded-full border border-white/10 px-2 py-0.5 bg-white/5"
-                      title={truncated}
-                      dangerouslySetInnerHTML={{ __html: html }}
-                    />
-                  );
-                })}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ))}
+          );
+        })}
         {!loading && !matchedPreview.length && (
           <div className="text-xs text-slate-500">No matches yet.</div>
         )}

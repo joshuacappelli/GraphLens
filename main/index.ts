@@ -474,7 +474,7 @@ ipcMain.handle("zoekt/search", async (_event, options: ZoektSearchHandlerOptions
     }
     const snippets = await buildContextSnippets(payload, options);
     console.info("[Zoekt] built context snippets", Object.keys(snippets).length);
-    return {
+  return {
       ...payload,
       snippets,
     };
