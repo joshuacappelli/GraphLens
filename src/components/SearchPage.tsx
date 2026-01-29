@@ -15,8 +15,8 @@ const SearchPage = () => {
   };
 
   return (
-    <section className="flex-1 flex flex-col items-center justify-start py-8">
-      <div className="sticky top-0 z-20 w-full border border-white/5 bg-slate-950/80 p-4 shadow-2xl shadow-black/20 backdrop-blur">
+    <section className="flex-1 flex flex-col items-center justify-start">
+      <div className="sticky top-0 z-20 w-full border border-white/5 bg-slate-950/80 py-4 shadow-2xl shadow-black/20 backdrop-blur">
         <form onSubmit={handleSubmit} className="flex">
           <div className="relative flex-1">
             <input
@@ -69,7 +69,7 @@ const SearchPage = () => {
         </form>
       </div>
 
-      <div className="mt-6 w-full max-w-3xl">
+      <div className="w-full">
         <ZoektSearch
           query={query}
           caseSensitive={caseSensitive}

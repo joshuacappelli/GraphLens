@@ -4,7 +4,9 @@ import path, { join } from "path";
 import { config as loadEnv } from "dotenv";
 import { randomUUID } from "crypto";
 import { mkdirSync } from "fs";
+import fs from "fs/promises";
 import { homedir } from "os";
+import chokidar, { FSWatcher } from "chokidar";
 import keytar from "keytar";
 
 import { getURL } from "./lib/getUrl";
@@ -56,6 +58,16 @@ function initializeDataDirectories() {
     mkdirSync(dir, { recursive: true });
   });
   console.log(`Neptune data directory initialized at ${NEPTUNE_HOME}`);
+}
+
+// ============================================================================
+// File System Watcher Registry
+// ============================================================================
+
+const dirWatchers = new Map<string, FSWatcher>();
+
+function normalizeDir(p: string): string {
+  return path.resolve(p);
 }
 
 if (!isDev) {
@@ -650,9 +662,136 @@ ipcMain.handle("jobs/listRecent", async (_event, limit: number = 20) => {
 });
 
 // ============================================================================
+// File System (lazy file tree)
+// ============================================================================
+
+type ListDirOptions = {
+  includeHidden?: boolean;
+  sort?: "name" | "kind";
+};
+
+ipcMain.handle("fs/listDir", async (_event, dirPath: string, options?: ListDirOptions) => {
+  const abs = normalizeDir(dirPath);
+
+  // Basic safety: ensure it's a directory
+  const stat = await fs.stat(abs);
+  if (!stat.isDirectory()) {
+    throw new Error(`Not a directory: ${abs}`);
+  }
+
+  const includeHidden = options?.includeHidden ?? false;
+  const sort = options?.sort ?? "kind";
+
+  const dirents = await fs.readdir(abs, { withFileTypes: true });
+
+  const entries = dirents
+    .map((d) => {
+      const name = d.name;
+      const full = path.join(abs, name);
+      const hidden = name.startsWith(".");
+      let kind: "file" | "dir" | "symlink" | "other" = "other";
+      if (d.isDirectory()) kind = "dir";
+      else if (d.isFile()) kind = "file";
+      else if (d.isSymbolicLink()) kind = "symlink";
+      return { name, path: full, kind, hidden };
+    })
+    .filter((e) => includeHidden || !e.hidden);
+
+  entries.sort((a, b) => {
+    if (sort === "kind") {
+      // dirs first
+      if (a.kind !== b.kind) {
+        if (a.kind === "dir") return -1;
+        if (b.kind === "dir") return 1;
+      }
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  return entries;
+});
+
+ipcMain.handle("fs/getRoots", async () => {
+  const home = homedir();
+  const reposDir = NEPTUNE_DIRS.repos;
+  
+  // Get volumes (macOS specific, falls back to root on other platforms)
+  let volumes: string[] = [];
+  if (process.platform === "darwin") {
+    try {
+      const volumeEntries = await fs.readdir("/Volumes", { withFileTypes: true });
+      volumes = volumeEntries
+        .filter((d) => d.isDirectory() || d.isSymbolicLink())
+        .map((d) => path.join("/Volumes", d.name));
+    } catch {
+      volumes = ["/"];
+    }
+  } else if (process.platform === "win32") {
+    // On Windows, list drive letters
+    volumes = ["C:\\", "D:\\", "E:\\"].filter(async (drive) => {
+      try {
+        await fs.access(drive);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  } else {
+    volumes = ["/"];
+  }
+
+  return { home, reposDir, volumes };
+});
+
+ipcMain.handle("fs/watchDir", async (_event, dirPath: string) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  
+  const abs = normalizeDir(dirPath);
+  if (dirWatchers.has(abs)) return true;
+
+  // Watch only this directory (NOT recursive) to keep it cheap.
+  const watcher = chokidar.watch(abs, {
+    ignoreInitial: true,
+    depth: 0,
+    persistent: true,
+  });
+
+  const emit = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("fs:dirChanged", abs);
+    }
+  };
+
+  watcher.on("add", emit);
+  watcher.on("unlink", emit);
+  watcher.on("addDir", emit);
+  watcher.on("unlinkDir", emit);
+  watcher.on("change", emit);
+
+  dirWatchers.set(abs, watcher);
+  return true;
+});
+
+ipcMain.handle("fs/unwatchDir", async (_event, dirPath: string) => {
+  const abs = normalizeDir(dirPath);
+  const watcher = dirWatchers.get(abs);
+  if (!watcher) return true;
+
+  await watcher.close();
+  dirWatchers.delete(abs);
+  return true;
+});
+
+// ============================================================================
 // Cleanup on app quit
 // ============================================================================
 
 app.on("before-quit", async () => {
+  // Close all directory watchers
+  for (const watcher of dirWatchers.values()) {
+    await watcher.close();
+  }
+  dirWatchers.clear();
+  
   await closePool();
 });

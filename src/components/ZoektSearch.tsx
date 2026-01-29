@@ -257,23 +257,23 @@ const ZoektSearch = ({
   const matchedPreview = results;
 
   return (
-    <div className="w-full max-w-3xl">
+    <div className="w-full">
       {error && (
         <div className="mt-3 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300">
           {error}
         </div>
       )}
       {count !== null && (
-        <div className="mt-3 text-xs uppercase tracking-wide text-slate-400">
+        <div className="mt-3 text-xs uppercase tracking-wide pl-2">
           {count} result{count === 1 ? "" : "s"}
           {durationSeconds !== null && (
-            <span className="ml-2 text-slate-500">
+            <span className="ml-2">
               in {durationSeconds < 0.01 ? "<0.01" : durationSeconds.toFixed(2)}s
             </span>
           )}
         </div>
       )}
-      <div className="mt-4 space-y-3">
+      <div className="mt-4">
         {matchedPreview.map((fileResult, fileIndex) => {
           const fileKey = `${fileResult.repository}-${fileResult.fileName}-${fileIndex}`;
           const isFileExpanded = expandedFiles.has(fileKey);
@@ -281,13 +281,13 @@ const ZoektSearch = ({
           return (
             <div
               key={fileKey}
-              className="rounded-2xl border border-white/5 bg-white/[0.02] text-sm text-slate-100 overflow-hidden"
+              className="border border-white/5 bg-white/[0.02] text-sm overflow-hidden"
             >
               <button
                 onClick={() => toggleFile(fileKey)}
-                className="w-full p-4 flex items-center gap-3 text-xs text-slate-500 hover:bg-white/[0.02] transition-colors text-left"
+                className="w-full p-4 flex items-center gap-3 text-xs hover:bg-white/[0.02] transition-colors text-left"
               >
-                <ChevronIcon expanded={isFileExpanded} className="text-slate-500 flex-shrink-0" />
+                <ChevronIcon expanded={isFileExpanded} className="flex-shrink-0" />
                 <span className="font-semibold text-white truncate">{fileResult.repository}</span>
                 <span className="truncate">/{fileResult.fileName}</span>
                 {fileResult.language && <span className="flex-shrink-0">{getLanguageName(fileResult.language)}</span>}
@@ -296,7 +296,7 @@ const ZoektSearch = ({
                     {fileResult.branches.join(", ")}
                   </span>
                 )}
-                <span className="ml-auto text-slate-600 flex-shrink-0">
+                <span className="ml-auto flex-shrink-0">
                   {fileResult.matches.length} match{fileResult.matches.length === 1 ? "" : "es"}
                 </span>
               </button>
@@ -307,16 +307,28 @@ const ZoektSearch = ({
                     const matchKey = `${fileKey}-${lineNum}-${matchIndex}`;
                     const isMatchExpanded = expandedMatches.has(matchKey);
                     
-                    // Split and clean before lines, removing trailing empty line
+                    // Split and clean before lines, removing leading and trailing empty lines
                     const rawBeforeLines = match.Before?.split("\n") ?? [];
-                    const beforeLines = rawBeforeLines.length > 0 && rawBeforeLines[rawBeforeLines.length - 1] === ""
-                      ? rawBeforeLines.slice(0, -1)
-                      : rawBeforeLines;
-                    // Split and clean after lines, removing leading empty line if After starts with newline
+                    let beforeLines = rawBeforeLines;
+                    // Remove trailing empty lines
+                    while (beforeLines.length > 0 && beforeLines[beforeLines.length - 1] === "") {
+                      beforeLines = beforeLines.slice(0, -1);
+                    }
+                    // Remove leading empty lines
+                    while (beforeLines.length > 0 && beforeLines[0] === "") {
+                      beforeLines = beforeLines.slice(1);
+                    }
+                    // Split and clean after lines, removing leading and trailing empty lines
                     const rawAfterLines = match.After?.split("\n") ?? [];
-                    const afterLines = rawAfterLines.length > 0 && rawAfterLines[0] === ""
-                      ? rawAfterLines.slice(1)
-                      : rawAfterLines;
+                    let afterLines = rawAfterLines;
+                    // Remove leading empty lines
+                    while (afterLines.length > 0 && afterLines[0] === "") {
+                      afterLines = afterLines.slice(1);
+                    }
+                    // Remove trailing empty lines
+                    while (afterLines.length > 0 && afterLines[afterLines.length - 1] === "") {
+                      afterLines = afterLines.slice(0, -1);
+                    }
                     
                     // Get the first fragment for the match line display
                     const fragments = match.Fragments ?? [];
@@ -342,26 +354,20 @@ const ZoektSearch = ({
                       <div key={matchKey} className="mt-3">
                         <button
                           onClick={() => toggleMatch(matchKey)}
-                          className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-slate-400 hover:text-slate-300 transition-colors"
+                          className="flex items-center gap-2 text-[10px] uppercase tracking-wide hover:text-slate-300 transition-colors"
                         >
                           <ChevronIcon expanded={isMatchExpanded} className="w-3 h-3" />
                           {lineNum !== undefined && <span>line {lineNum}</span>}
-                          {match.Language && <span>• {getLanguageName(match.Language)}</span>}
-                          {fragmentData?.Match && (
-                            <span className="normal-case text-yellow-400/70 font-mono">
-                              "{fragmentData.Match}"
-                            </span>
-                          )}
                         </button>
                         {isMatchExpanded && hasContext ? (
-                          <div className="mt-1 rounded-lg border border-white/10 bg-[#0d1117] overflow-hidden font-mono text-xs">
+                          <div className="mt-1 rounded-lg border border-white/10 bg-[#0d1117] text-slate-500 overflow-hidden font-mono text-xs">
                             {/* Before context */}
                             {beforeLines.map((line, i) => {
                               const ln = beforeStartLine + i;
                               return (
                                 <div key={`before-${ln}`} className="flex">
                                   <span 
-                                    className="select-none text-slate-600 bg-[#161b22] px-2 py-0.5 text-right border-r border-white/5"
+                                    className="select-none bg-[#161b22] px-2 py-0.5 text-right border-r border-white/5"
                                     style={{ minWidth: `${gutterWidth + 2}ch` }}
                                   >
                                     {ln}
@@ -400,7 +406,7 @@ const ZoektSearch = ({
                               return (
                                 <div key={`after-${ln}`} className="flex">
                                   <span 
-                                    className="select-none text-slate-600 bg-[#161b22] px-2 py-0.5 text-right border-r border-white/5"
+                                    className="select-none text-slate-500 bg-[#161b22] px-2 py-0.5 text-right border-r border-white/5"
                                     style={{ minWidth: `${gutterWidth + 2}ch` }}
                                   >
                                     {ln}

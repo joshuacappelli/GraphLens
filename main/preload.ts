@@ -105,6 +105,25 @@ export type ZoektSearchResponse = {
   [key: string]: unknown;
 };
 
+// File system types
+export type FsEntry = {
+  name: string;
+  path: string;
+  kind: "file" | "dir" | "symlink" | "other";
+  hidden: boolean;
+};
+
+export type ListDirOptions = {
+  includeHidden?: boolean;   // default false
+  sort?: "name" | "kind";    // default "kind" (dirs first)
+};
+
+export type FsRoots = {
+  home: string;
+  reposDir: string;
+  volumes: string[];
+};
+
 // Input for adding a tracked repo
 export type AddTrackedRepoInput = {
   externalRepoId: number;
@@ -166,6 +185,25 @@ export const api = {
     num?: number;
     pattern?: "literal" | "regexp";
   }) => ipcRenderer.invoke("zoekt/search", options) as Promise<ZoektSearchResponse>,
+
+  // FS (lazy file tree)
+  listDir: (dirPath: string, options?: ListDirOptions) =>
+    ipcRenderer.invoke("fs/listDir", dirPath, options) as Promise<FsEntry[]>,
+
+  getRoots: () =>
+    ipcRenderer.invoke("fs/getRoots") as Promise<FsRoots>,
+
+  watchDir: (dirPath: string) =>
+    ipcRenderer.invoke("fs/watchDir", dirPath) as Promise<boolean>,
+
+  unwatchDir: (dirPath: string) =>
+    ipcRenderer.invoke("fs/unwatchDir", dirPath) as Promise<boolean>,
+
+  onDirChanged: (callback: (dirPath: string) => void) => {
+    const listener = (_e: IpcRendererEvent, dirPath: string) => callback(dirPath);
+    ipcRenderer.on("fs:dirChanged", listener);
+    return () => ipcRenderer.removeListener("fs:dirChanged", listener);
+  },
 };
 
 contextBridge.exposeInMainWorld("electron", api);
