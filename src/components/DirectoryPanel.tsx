@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight, Folder, FolderOpen, File, Home, HardDrive, Database } from "lucide-react";
+import { useTabsStore, type Tab, type TabsState } from "../context/tabsStore";
 
 type FsEntry = {
   name: string;
@@ -13,17 +14,55 @@ type DirectoryPanelProps = {
   onClose: () => void;
 };
 
-type TreeNode = {
-  entry: FsEntry;
-  children: FsEntry[] | null;
-  loading: boolean;
-};
-
 const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
   const [roots, setRoots] = useState<{ home: string; reposDir: string; volumes: string[] } | null>(null);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [dirChildren, setDirChildren] = useState<Map<string, FsEntry[]>>(new Map());
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
+  /** When tab is on a file, this is the parent dir's contents shown above the tree. */
+  const [currentFolderEntries, setCurrentFolderEntries] = useState<FsEntry[] | null>(null);
+  const [currentFolderLoading, setCurrentFolderLoading] = useState(false);
+
+  const activeTabId = useTabsStore((s: TabsState) => s.activeTabId);
+  const tabs = useTabsStore((s: TabsState) => s.tabs);
+  const setTabDirectory = useTabsStore((s: TabsState) => s.setTabDirectory);
+  const activeTab = useMemo(
+    () => tabs.find((t: Tab) => t.id === activeTabId) ?? null,
+    [tabs, activeTabId]
+  );
+  const activeDirectory = activeTab?.directory ?? "~";
+  const resolvedDirectory = useMemo(
+    () => (activeDirectory === "~" && roots ? roots.home : activeDirectory),
+    [activeDirectory, roots]
+  );
+
+  // Clear current folder section when tab is no longer on a file (e.g. user clicked a folder)
+  useEffect(() => {
+    if (!isOpen || !activeTab?.file) {
+      setCurrentFolderEntries(null);
+    }
+  }, [isOpen, activeTab?.file]);
+
+  // When tab is on a file, load parent directory contents; only refetch when the folder path changes (not when switching files in the same folder)
+  useEffect(() => {
+    if (!isOpen || !activeTab?.file || !resolvedDirectory) return;
+    let cancelled = false;
+    setCurrentFolderLoading(true);
+    window.electron
+      ?.listDir(resolvedDirectory)
+      .then((entries) => {
+        if (!cancelled && entries) setCurrentFolderEntries(entries);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentFolderEntries(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCurrentFolderLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, resolvedDirectory]);
 
   // Fetch roots on mount
   useEffect(() => {
@@ -114,21 +153,46 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     }
   }, [expandedDirs, dirChildren, loadDirectory]);
 
+  const handleSetTabDirectory = useCallback(
+    (dirPath: string, filePath?: string | null) => {
+      if (activeTabId) setTabDirectory(activeTabId, dirPath, filePath);
+    },
+    [activeTabId, setTabDirectory]
+  );
+
+  const getParentDir = (filePath: string): string => {
+    const isAbsolute = filePath.startsWith("/");
+    const parts = filePath.split("/").filter(Boolean);
+    if (parts.length <= 1) return isAbsolute ? "/" : "/";
+    const joined = parts.slice(0, -1).join("/");
+    return isAbsolute ? `/${joined}` : joined;
+  };
+
   const renderEntry = (entry: FsEntry, depth: number = 0) => {
     const isDir = entry.kind === "dir";
     const isExpanded = expandedDirs.has(entry.path);
     const isLoading = loadingDirs.has(entry.path);
     const children = dirChildren.get(entry.path);
 
+    const handleClick = () => {
+      if (activeTabId) {
+        if (isDir) {
+          handleSetTabDirectory(entry.path, null);
+        } else {
+          handleSetTabDirectory(getParentDir(entry.path), entry.path);
+        }
+      }
+      if (isDir) toggleDirectory(entry.path);
+    };
+
     return (
       <div key={entry.path}>
         <button
-          onClick={() => isDir && toggleDirectory(entry.path)}
+          onClick={handleClick}
           className={`w-full flex items-center gap-2 py-1 px-2 text-left text-[13px] hover:bg-white/5 rounded transition-colors ${
-            isDir ? "cursor-pointer" : "cursor-default text-slate-500"
+            isDir ? "cursor-pointer" : "cursor-pointer text-slate-500"
           }`}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
-          disabled={!isDir}
         >
           {isDir && (
             <ChevronRight
@@ -180,10 +244,15 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     const isLoading = loadingDirs.has(dirPath);
     const children = dirChildren.get(dirPath);
 
+    const handleRootClick = () => {
+      if (activeTabId) handleSetTabDirectory(dirPath, null);
+      toggleDirectory(dirPath);
+    };
+
     return (
       <div key={dirPath}>
         <button
-          onClick={() => toggleDirectory(dirPath)}
+          onClick={handleRootClick}
           className="w-full flex items-center gap-2 py-2 px-2 text-left text-[13px] hover:bg-white/5 rounded transition-colors font-medium"
         >
           <ChevronRight
@@ -226,8 +295,54 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
           ×
         </button>
       </div>
-      
+      {activeTab != null && !activeTab.file && (
+        <div className="px-4 pb-2 text-[11px] text-slate-500 truncate" title={resolvedDirectory}>
+          Tab: {resolvedDirectory === (roots?.home ?? "") ? "~" : resolvedDirectory}
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto px-2 pb-4">
+        {activeTab?.file && (
+          <div className="mb-3 pb-3 border-b border-white/10">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500 px-2 py-1.5 truncate" title={resolvedDirectory}>
+              {resolvedDirectory === (roots?.home ?? "") ? "~" : resolvedDirectory}
+            </div>
+            {currentFolderLoading ? (
+              <div className="text-[12px] text-slate-500 px-2 py-1">Loading...</div>
+            ) : currentFolderEntries ? (
+              <div className="space-y-0.5">
+                {currentFolderEntries.map((entry) => {
+                  const isDir = entry.kind === "dir";
+                  const isSelectedFile = !isDir && entry.path === activeTab.file;
+                  return (
+                    <button
+                      key={entry.path}
+                      onClick={() => {
+                        if (!activeTabId) return;
+                        if (isDir) {
+                          handleSetTabDirectory(entry.path, null);
+                        } else {
+                          handleSetTabDirectory(getParentDir(entry.path), entry.path);
+                        }
+                      }}
+                      className={`w-full flex items-center gap-2 py-1 px-2 text-left text-[13px] rounded transition-colors ${
+                        isSelectedFile ? "bg-white/10 text-slate-200" : "hover:bg-white/5 text-slate-400"}
+                      `}
+                    >
+                      {isDir ? (
+                        <Folder size={16} className="flex-shrink-0 text-yellow-500" />
+                      ) : (
+                        <File size={16} className="flex-shrink-0 text-slate-400" />
+                      )}
+                      <span className="truncate">{entry.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-[12px] text-slate-500 px-2 py-1">No entries</div>
+            )}
+          </div>
+        )}
         {!roots ? (
           <div className="text-[13px] text-slate-500 p-2">Loading...</div>
         ) : (
