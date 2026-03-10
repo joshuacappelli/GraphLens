@@ -35,21 +35,29 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     () => (activeDirectory === "~" && roots ? roots.home : activeDirectory),
     [activeDirectory, roots]
   );
+  /** Path of the folder shown in the current folder section (parent of file, or pinned folder). */
+  const sectionFolderPath = useMemo(() => {
+    if (activeTab?.file) return resolvedDirectory;
+    if (activeTab?.pinnedFolder) {
+      return activeTab.pinnedFolder === "~" && roots ? roots.home : activeTab.pinnedFolder;
+    }
+    return null;
+  }, [activeTab?.file, activeTab?.pinnedFolder, resolvedDirectory, roots]);
 
-  // Clear current folder section when tab is no longer on a file (e.g. user clicked a folder)
+  // Clear current folder section when neither file nor pinned folder
   useEffect(() => {
-    if (!isOpen || !activeTab?.file) {
+    if (!isOpen || !sectionFolderPath) {
       setCurrentFolderEntries(null);
     }
-  }, [isOpen, activeTab?.file]);
+  }, [isOpen, sectionFolderPath]);
 
-  // When tab is on a file, load parent directory contents; only refetch when the folder path changes (not when switching files in the same folder)
+  // Load folder contents for the section; only refetch when the folder path changes
   useEffect(() => {
-    if (!isOpen || !activeTab?.file || !resolvedDirectory) return;
+    if (!isOpen || !sectionFolderPath) return;
     let cancelled = false;
     setCurrentFolderLoading(true);
     window.electron
-      ?.listDir(resolvedDirectory)
+      ?.listDir(sectionFolderPath)
       .then((entries) => {
         if (!cancelled && entries) setCurrentFolderEntries(entries);
       })
@@ -62,7 +70,7 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     return () => {
       cancelled = true;
     };
-  }, [isOpen, resolvedDirectory]);
+  }, [isOpen, sectionFolderPath]);
 
   // Fetch roots on mount
   useEffect(() => {
@@ -154,8 +162,8 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
   }, [expandedDirs, dirChildren, loadDirectory]);
 
   const handleSetTabDirectory = useCallback(
-    (dirPath: string, filePath?: string | null) => {
-      if (activeTabId) setTabDirectory(activeTabId, dirPath, filePath);
+    (dirPath: string, filePath?: string | null, pinnedFolder?: string | null) => {
+      if (activeTabId) setTabDirectory(activeTabId, dirPath, filePath, pinnedFolder);
     },
     [activeTabId, setTabDirectory]
   );
@@ -177,7 +185,7 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     const handleClick = () => {
       if (activeTabId) {
         if (isDir) {
-          handleSetTabDirectory(entry.path, null);
+          handleSetTabDirectory(entry.path, null, null);
         } else {
           handleSetTabDirectory(getParentDir(entry.path), entry.path);
         }
@@ -245,7 +253,7 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     const children = dirChildren.get(dirPath);
 
     const handleRootClick = () => {
-      if (activeTabId) handleSetTabDirectory(dirPath, null);
+      if (activeTabId) handleSetTabDirectory(dirPath, null, null);
       toggleDirectory(dirPath);
     };
 
@@ -301,10 +309,10 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
         </div>
       )}
       <div className="flex-1 overflow-y-auto px-2 pb-4">
-        {activeTab?.file && (
+        {sectionFolderPath != null && (
           <div className="mb-3 pb-3 border-b border-white/10">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500 px-2 py-1.5 truncate" title={resolvedDirectory}>
-              {resolvedDirectory === (roots?.home ?? "") ? "~" : resolvedDirectory}
+            <div className="text-[10px] uppercase tracking-wide text-slate-500 px-2 py-1.5 truncate" title={sectionFolderPath}>
+              {sectionFolderPath === (roots?.home ?? "") ? "~" : sectionFolderPath}
             </div>
             {currentFolderLoading ? (
               <div className="text-[12px] text-slate-500 px-2 py-1">Loading...</div>
@@ -312,14 +320,14 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
               <div className="space-y-0.5">
                 {currentFolderEntries.map((entry) => {
                   const isDir = entry.kind === "dir";
-                  const isSelectedFile = !isDir && entry.path === activeTab.file;
+                  const isSelectedFile = !isDir && entry.path === activeTab?.file;
                   return (
                     <button
                       key={entry.path}
                       onClick={() => {
                         if (!activeTabId) return;
                         if (isDir) {
-                          handleSetTabDirectory(entry.path, null);
+                          handleSetTabDirectory(entry.path, null, entry.path);
                         } else {
                           handleSetTabDirectory(getParentDir(entry.path), entry.path);
                         }

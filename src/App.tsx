@@ -3,6 +3,7 @@ import Header from "./components/Header";
 import AppBar from "./components/AppBar";
 import Login from "./components/Login";
 import Home from "./components/Home";
+import Repositories from "./components/Repositories";
 import SearchPage from "./components/SearchPage";
 import DirectoryPanel from "./components/DirectoryPanel";
 import { COMMANDS, matchesShortcut } from "./commands";
@@ -106,7 +107,7 @@ function App() {
     }
   };
 
-  const [page, setPage] = useState<"home" | "search">("home");
+  const [page, setPage] = useState<"home" | "repositories" | "search">("home");
 
   useEffect(() => {
     const directoryCommand = COMMANDS.find(
@@ -153,6 +154,10 @@ function App() {
       return <SearchPage/>;
     }
 
+    if (page === "repositories") {
+      return <Repositories />;
+    }
+
     return <Home />;
   };
 
@@ -166,6 +171,7 @@ function App() {
           onLogout={handleLogout}
           onHome={() => setPage("home")}
           onSearch={() => setPage("search")}
+          onRepositories={() => setPage("repositories")}
         />
       )}
         <div className="flex flex-1 overflow-hidden">

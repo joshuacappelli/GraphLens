@@ -7,6 +7,8 @@ export type Tab = {
   file: string | null;
   /** Tab label; only updated when user clicks a file, so folder clicks don't change the name. */
   displayLabel: string;
+  /** When set, current folder section shows this folder (e.g. after opening a folder from the section). */
+  pinnedFolder: string | null;
 };
 
 export type TabsState = {
@@ -15,8 +17,8 @@ export type TabsState = {
   addTab: () => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
-  /** Set directory; pass file to show file name in tab and pin parent folder above tree. */
-  setTabDirectory: (tabId: string, directory: string, file?: string | null) => void;
+  /** Set directory; pass file to show file name in tab. Pass pinnedFolder when opening a folder in the current folder section. */
+  setTabDirectory: (tabId: string, directory: string, file?: string | null, pinnedFolder?: string | null) => void;
 };
 
 function generateId(): string {
@@ -31,12 +33,12 @@ function basename(path: string): string {
 }
 
 export const useTabsStore = create<TabsState>((set) => ({
-  tabs: [{ id: initialTabId, directory: "~", file: null, displayLabel: "~" }],
+  tabs: [{ id: initialTabId, directory: "~", file: null, displayLabel: "~", pinnedFolder: null }],
   activeTabId: initialTabId,
 
   addTab: () =>
     set((state) => {
-      const newTab: Tab = { id: generateId(), directory: "~", file: null, displayLabel: "~" };
+      const newTab: Tab = { id: generateId(), directory: "~", file: null, displayLabel: "~", pinnedFolder: null };
       return {
         tabs: [...state.tabs, newTab],
         activeTabId: newTab.id,
@@ -63,13 +65,16 @@ export const useTabsStore = create<TabsState>((set) => ({
       return exists ? { activeTabId: id } : state;
     }),
 
-  setTabDirectory: (tabId, directory, file = null) =>
+  setTabDirectory: (tabId, directory, file = null, pinnedFolder = undefined) =>
     set((state) => ({
       tabs: state.tabs.map((t) => {
         if (t.id !== tabId) return t;
         const next: Tab = { ...t, directory, file };
         if (file != null && file !== "") {
           next.displayLabel = basename(file);
+          next.pinnedFolder = null;
+        } else {
+          next.pinnedFolder = pinnedFolder !== undefined ? pinnedFolder : t.pinnedFolder;
         }
         return next;
       }),
