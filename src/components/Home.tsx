@@ -1,5 +1,7 @@
+import { MonacoWorkspace } from "./Monaco";
+
 const Home = () => {
-  return <div className="flex-1" />;
+  return <MonacoWorkspace />;
 };
 
 export default Home;

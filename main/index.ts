@@ -711,6 +711,33 @@ ipcMain.handle("fs/listDir", async (_event, dirPath: string, options?: ListDirOp
   return entries;
 });
 
+const MAX_READ_FILE_BYTES = 5 * 1024 * 1024; // 5 MiB
+
+ipcMain.handle("fs/readFileText", async (_event, filePath: string) => {
+  const abs = path.resolve(filePath);
+  const stat = await fs.stat(abs);
+  if (!stat.isFile()) {
+    throw new Error(`Not a file: ${abs}`);
+  }
+  if (stat.size > MAX_READ_FILE_BYTES) {
+    throw new Error(`File is too large to open (${stat.size} bytes; max ${MAX_READ_FILE_BYTES})`);
+  }
+  return fs.readFile(abs, "utf8");
+});
+
+ipcMain.handle("fs/writeFileText", async (_event, filePath: string, text: string) => {
+  const abs = path.resolve(filePath);
+  const buf = Buffer.from(text, "utf8");
+  if (buf.length > MAX_READ_FILE_BYTES) {
+    throw new Error(`File is too large to save (${buf.length} bytes; max ${MAX_READ_FILE_BYTES})`);
+  }
+  const stat = await fs.stat(abs).catch(() => null);
+  if (stat && !stat.isFile()) {
+    throw new Error(`Not a file: ${abs}`);
+  }
+  await fs.writeFile(abs, text, "utf8");
+});
+
 ipcMain.handle("fs/getRoots", async () => {
   const home = homedir();
   const reposDir = NEPTUNE_DIRS.repos;

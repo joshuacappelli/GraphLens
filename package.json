@@ -26,6 +26,7 @@
         "migrate:down": "node-pg-migrate down"
     },
     "dependencies": {
+        "@monaco-editor/react": "^4.7.0",
         "@types/bun": "^1.2.4",
         "baseline-browser-mapping": "^2.9.11",
         "caniuse-lite": "^1.0.30001761",
@@ -37,6 +38,7 @@
         "electronmon": "^2.0.3",
         "keytar": "^7.9.0",
         "lucide-react": "^0.562.0",
+        "monaco-editor": "^0.55.1",
         "node-pg-migrate": "^8.0.4",
         "pg": "^8.16.3",
         "react": "^18.3.1",
@@ -64,6 +66,7 @@
         "typescript": "^5.7.2",
         "typescript-eslint": "^8.18.2",
         "vite": "^6.0.5",
+        "vite-plugin-monaco-editor": "^1.1.0",
         "wait-on": "^8.0.2"
     },
     "build": {

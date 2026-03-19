@@ -190,6 +190,12 @@ export const api = {
   listDir: (dirPath: string, options?: ListDirOptions) =>
     ipcRenderer.invoke("fs/listDir", dirPath, options) as Promise<FsEntry[]>,
 
+  readFileText: (filePath: string) =>
+    ipcRenderer.invoke("fs/readFileText", filePath) as Promise<string>,
+
+  writeFileText: (filePath: string, text: string) =>
+    ipcRenderer.invoke("fs/writeFileText", filePath, text) as Promise<void>,
+
   getRoots: () =>
     ipcRenderer.invoke("fs/getRoots") as Promise<FsRoots>,
 

@@ -179,7 +179,7 @@ function App() {
             isOpen={dirPanelOpen} 
             onClose={() => setDirPanelOpen(false)} 
           />
-          <div className="flex-1 relative overflow-auto">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             {renderContent()}
             {shortcutPanelOpen && (
               <aside className="absolute inset-y-0 right-0 w-72 border-l border-white/10 bg-slate-900/95 p-6 text-sm text-slate-300 shadow-2xl shadow-black/60">
