@@ -7,6 +7,7 @@ import Repositories from "./components/Repositories";
 import SearchPage from "./components/SearchPage";
 import DirectoryPanel from "./components/DirectoryPanel";
 import { COMMANDS, matchesShortcut } from "./commands";
+import { useWorkspaceStore } from "./context/workspaceStore";
 
 type AuthTokens = {
   access_token?: string;
@@ -30,6 +31,8 @@ type GitHubUserInfo = {
 };
 
 function App() {
+  const workspaceRoot = useWorkspaceStore((s) => s.root);
+  const setWorkspaceRoot = useWorkspaceStore((s) => s.setRoot);
   const [authState, setAuthState] = useState<AuthSuccessPayload | null>(null);
   const [userInfo, setUserInfo] = useState<GitHubUserInfo | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -49,6 +52,13 @@ function App() {
       cleanup?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (workspaceRoot) return;
+    window.electron?.getCurrentDirectory?.().then((cwd) => {
+      if (cwd) setWorkspaceRoot(cwd);
+    }).catch(() => {});
+  }, [workspaceRoot, setWorkspaceRoot]);
 
   useEffect(() => {
     let isActive = true;

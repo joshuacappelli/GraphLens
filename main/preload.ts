@@ -196,6 +196,18 @@ export const api = {
   writeFileText: (filePath: string, text: string) =>
     ipcRenderer.invoke("fs/writeFileText", filePath, text) as Promise<void>,
 
+  startTypeScriptLsp: (workspaceRoot: string) =>
+    ipcRenderer.invoke("lsp/ts/start", workspaceRoot) as Promise<{ port: number; workspaceRoot: string }>,
+
+  stopTypeScriptLsp: () =>
+    ipcRenderer.invoke("lsp/ts/stop") as Promise<boolean>,
+
+  selectWorkspaceFolder: () =>
+    ipcRenderer.invoke("workspace/selectFolder") as Promise<string | null>,
+
+  findWorkspaceRootForPath: (filePath: string) =>
+    ipcRenderer.invoke("workspace/findRootForPath", filePath) as Promise<string>,
+
   getRoots: () =>
     ipcRenderer.invoke("fs/getRoots") as Promise<FsRoots>,
 

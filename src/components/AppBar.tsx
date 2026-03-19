@@ -6,8 +6,10 @@ import {
   FolderGit2,
   Settings,
   LogOut,
+  FolderOpen,
 } from "lucide-react";
 import { AppBarButton, MenuItem } from "./AppBarButton";
+import { useWorkspaceStore } from "../context/workspaceStore";
 
 type GitHubUserInfo = {
   login: string;
@@ -36,6 +38,8 @@ const AppBar = ({
   onRepositories,
   onHome,
 }: AppBarProps) => {
+  const workspaceRoot = useWorkspaceStore((s) => s.root);
+  const setWorkspaceRoot = useWorkspaceStore((s) => s.setRoot);
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -106,6 +110,15 @@ const AppBar = ({
 
             {/* Menu Items */}
             <div className="py-1">
+              <MenuItem
+                icon={<FolderOpen size={14} />}
+                label={workspaceRoot ? "Change workspace folder" : "Open workspace folder"}
+                onClick={async () => {
+                  const picked = await window.electron?.selectWorkspaceFolder?.();
+                  if (picked) setWorkspaceRoot(picked);
+                  setOpen(false);
+                }}
+              />
               {isLoggedIn && onLogout && (
                 <MenuItem
                   icon={<LogOut size={14} />}

@@ -54,8 +54,17 @@ const Header = ({ onToggleDirectory }: HeaderProps) => {
                   <button
                     type="button"
                     onClick={() => setActiveTab(tab.id)}
-                    className="flex-1 flex items-center gap-1.5 py-1 pl-2 text-left text-xs truncate"
+                    className="flex-1 flex items-center gap-1 py-1 pl-2 text-left text-xs truncate"
                   >
+                    {tab.editorDirty ? (
+                      <span
+                        className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-400"
+                        aria-label="Unsaved changes"
+                        title="Unsaved changes"
+                      />
+                    ) : (
+                      <span className="w-1.5 flex-shrink-0" aria-hidden />
+                    )}
                     <span className="truncate">{tab.displayLabel}</span>
                   </button>
                   {canClose && (

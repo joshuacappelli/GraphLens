@@ -161,6 +161,7 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     }
   }, [expandedDirs, dirChildren, loadDirectory]);
 
+  /** `filePath`: string = open file, `null` = clear open file, omit = keep open file when only changing folder. */
   const handleSetTabDirectory = useCallback(
     (dirPath: string, filePath?: string | null, pinnedFolder?: string | null) => {
       if (activeTabId) setTabDirectory(activeTabId, dirPath, filePath, pinnedFolder);
@@ -185,7 +186,7 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     const handleClick = () => {
       if (activeTabId) {
         if (isDir) {
-          handleSetTabDirectory(entry.path, null, null);
+          handleSetTabDirectory(entry.path, undefined, null);
         } else {
           handleSetTabDirectory(getParentDir(entry.path), entry.path);
         }
@@ -253,7 +254,7 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
     const children = dirChildren.get(dirPath);
 
     const handleRootClick = () => {
-      if (activeTabId) handleSetTabDirectory(dirPath, null, null);
+      if (activeTabId) handleSetTabDirectory(dirPath, undefined, null);
       toggleDirectory(dirPath);
     };
 
@@ -327,7 +328,7 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
                       onClick={() => {
                         if (!activeTabId) return;
                         if (isDir) {
-                          handleSetTabDirectory(entry.path, null, entry.path);
+                          handleSetTabDirectory(entry.path, undefined, entry.path);
                         } else {
                           handleSetTabDirectory(getParentDir(entry.path), entry.path);
                         }
@@ -367,20 +368,6 @@ const DirectoryPanel = ({ isOpen, onClose }: DirectoryPanelProps) => {
               <Database size={16} className="flex-shrink-0 text-green-400" />
             )}
             
-            {roots.volumes.length > 0 && (
-              <div className="pt-2 mt-2 border-t border-white/5">
-                <div className="text-[10px] uppercase tracking-wide text-slate-500 px-2 py-1">
-                  Volumes
-                </div>
-                {roots.volumes.map((volume) => (
-                  renderRootButton(
-                    volume.split("/").pop() || volume,
-                    volume,
-                    <HardDrive size={16} className="flex-shrink-0 text-slate-400" />
-                  )
-                ))}
-              </div>
-            )}
           </div>
         )}
       </div>

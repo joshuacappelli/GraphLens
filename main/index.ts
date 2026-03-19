@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import serve from "electron-serve";
 import path, { join } from "path";
 import { config as loadEnv } from "dotenv";
@@ -39,6 +39,7 @@ import {
   cleanupRepoSnapshots,
   readFileFromZoektRepo,
 } from "./lib/zoekt";
+import { startTypeScriptLspBridge } from "./lib/tsLspBridge";
 
 const envFilePath = join(process.cwd(), ".env");
 loadEnv({ path: envFilePath });
@@ -736,6 +737,56 @@ ipcMain.handle("fs/writeFileText", async (_event, filePath: string, text: string
     throw new Error(`Not a file: ${abs}`);
   }
   await fs.writeFile(abs, text, "utf8");
+});
+
+let tsLsp: Awaited<ReturnType<typeof startTypeScriptLspBridge>> | null = null;
+
+ipcMain.handle("lsp/ts/start", async (_event, workspaceRoot: string) => {
+  console.info("[lsp] start request", { workspaceRoot });
+  if (tsLsp) {
+    await tsLsp.stop();
+    tsLsp = null;
+  }
+  tsLsp = await startTypeScriptLspBridge(workspaceRoot);
+  return { port: tsLsp.port, workspaceRoot: tsLsp.workspaceRoot };
+});
+
+ipcMain.handle("lsp/ts/stop", async () => {
+  if (!tsLsp) return true;
+  await tsLsp.stop();
+  tsLsp = null;
+  return true;
+});
+
+ipcMain.handle("workspace/selectFolder", async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Open workspace folder",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0] ?? null;
+});
+
+ipcMain.handle("workspace/findRootForPath", async (_event, filePath: string) => {
+  const start = path.resolve(filePath);
+  let current = (await fs.stat(start).catch(() => null))?.isDirectory() ? start : path.dirname(start);
+  // Walk up looking for typical workspace root markers.
+  while (true) {
+    const markers = ["package.json", "tsconfig.json", "tsconfig.renderer.json", ".git"];
+    for (const marker of markers) {
+      try {
+        await fs.access(path.join(current, marker));
+        return current;
+      } catch {
+        // ignore
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return path.dirname(start);
 });
 
 ipcMain.handle("fs/getRoots", async () => {
