@@ -47,6 +47,7 @@ export async function startTypeScriptLspBridge(workspaceRoot: string): Promise<B
 
   // One LSP server process per bridge; allow multiple websocket clients by forwarding on connect.
   wss.on("connection", (webSocket) => {
+    console.info("[ts-lsp] client connected");
     const socket = toSocket(webSocket as unknown as WebSocket);
     const wsConnection = createWebSocketConnection(socket);
     forward(wsConnection, processConnection);

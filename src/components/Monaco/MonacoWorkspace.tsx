@@ -38,6 +38,8 @@ export function MonacoWorkspace() {
   const lspClientRef = useRef<MonacoLanguageClient | null>(null);
   const lspSocketRef = useRef<WebSocket | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);
+  const lspStartedForRootRef = useRef<string | null>(null);
+  const [monacoReady, setMonacoReady] = useState(false);
 
   const contentRef = useRef(content);
   const savedContentRef = useRef(savedContent);
@@ -61,15 +63,18 @@ export function MonacoWorkspace() {
   // Start/Restart TS LSP when workspace root changes
   useEffect(() => {
     if (!workspaceRoot || !window.electron?.startTypeScriptLsp) return;
+    if (lspStartedForRootRef.current === workspaceRoot) return;
     let cancelled = false;
     void window.electron
       .startTypeScriptLsp(workspaceRoot)
       .then((res) => {
         if (!cancelled) setLspPort(res.port);
+        lspStartedForRootRef.current = workspaceRoot;
       })
       .catch((e) => {
         console.error("[lsp] failed to start", e);
         if (!cancelled) setLspPort(null);
+        lspStartedForRootRef.current = null;
       });
     return () => {
       cancelled = true;
@@ -81,30 +86,34 @@ export function MonacoWorkspace() {
     console.info("[monaco] active file", { filePath, workspaceRoot });
   }, [filePath, workspaceRoot]);
 
-  // Disable Monaco's built-in TS/JS diagnostics once the real LSP is connected.
-  // Otherwise you get duplicate / bogus "Cannot find module ..." errors from Monaco's standalone TS worker.
-  useEffect(() => {
-    const m = monacoRef.current;
-    if (!m) return;
-    if (!lspPort) return;
+  const disableBuiltInTypeScriptDiagnostics = useCallback((m: typeof monaco) => {
     // Monaco's type definitions sometimes mark languages.typescript as deprecated/unknown.
     // We intentionally treat it as runtime-available when Monaco's TS contrib is present.
     const ts: any = (m as any).languages?.typescript;
     if (!ts?.typescriptDefaults || !ts?.javascriptDefaults) return;
+    ts.typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+    });
+    ts.javascriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+    });
+  }, []);
 
+  // Disable Monaco's built-in TS/JS diagnostics once the real LSP is connected.
+  // Otherwise you get duplicate / bogus "Cannot find module ..." errors from Monaco's standalone TS worker.
+  useEffect(() => {
+    const m = monacoRef.current;
+    if (!m || !monacoReady) return;
+    if (!lspPort) return;
     try {
-      ts.typescriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: true,
-        noSyntaxValidation: true,
-      });
-      ts.javascriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: true,
-        noSyntaxValidation: true,
-      });
+      disableBuiltInTypeScriptDiagnostics(m);
+      console.info("[monaco] disabled built-in TS/JS diagnostics");
     } catch (e) {
       console.warn("[monaco] unable to disable built-in diagnostics", e);
     }
-  }, [lspPort]);
+  }, [lspPort, monacoReady, disableBuiltInTypeScriptDiagnostics]);
 
   // Connect Monaco <-> LSP bridge when we have a port + monaco API.
   // Note: this provides completions/diagnostics/navigation via LSP; it is workspace-aware through the server's cwd.
@@ -128,9 +137,7 @@ export function MonacoWorkspace() {
       const reader = new WebSocketMessageReader(socket);
       const writer = new WebSocketMessageWriter(socket);
 
-      // NOTE: This is the minimal wiring: MonacoLanguageClient + transports.
-      // Full VS Code-like UX (workspace, filesystem, etc) can be layered later.
-      reader.listen(() => {});
+      console.info("[lsp] ws connected", { url });
 
       const client = new MonacoLanguageClient({
         name: "TypeScript Language Server",
@@ -145,6 +152,7 @@ export function MonacoWorkspace() {
       });
 
       lspClientRef.current = client;
+      console.info("[lsp] client starting");
       void client.start();
       reader.onClose(() => client.stop());
     };
@@ -306,6 +314,7 @@ export function MonacoWorkspace() {
   const language = filePath ? languageFromPath(filePath) : "plaintext";
   const editorKey = `${activeTabId ?? "x"}-${filePath ?? "none"}`;
   const canEdit = Boolean(filePath && !loadError);
+  const modelUri = filePath ? `file://${filePath}` : "inmemory://model/no-file";
 
   return (
     <section className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[#1e1e1e]">
@@ -341,11 +350,22 @@ export function MonacoWorkspace() {
           key={editorKey}
           height="100%"
           language={language}
-          path={filePath ?? "no-file"}
+          // @monaco-editor/react calls monaco.Uri.parse(path), so this must be a URI string.
+          // Using file:// ensures TS server can resolve relative imports from disk.
+          path={modelUri}
           value={filePath ? content : NO_FILE_PLACEHOLDER}
           onChange={handleChange}
           beforeMount={(m) => {
             monacoRef.current = m as unknown as typeof monaco;
+            setMonacoReady(true);
+            // If LSP is already up, disable built-in diagnostics immediately.
+            if (lspPort) {
+              try {
+                disableBuiltInTypeScriptDiagnostics(m as unknown as typeof monaco);
+              } catch {
+                // ignore
+              }
+            }
           }}
           theme="vs-dark"
           options={{
