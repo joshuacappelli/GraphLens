@@ -4,6 +4,7 @@ import { useTabsStore, type Tab, type TabsState } from "../../context/tabsStore"
 import { useWorkspaceStore } from "../../context/workspaceStore";
 import { languageFromPath } from "./languageFromPath";
 import { NO_FILE_PLACEHOLDER } from "./constants";
+import { ensureVscodeServicesStarted } from "./vscodeBootstrap";
 import type * as monaco from "monaco-editor";
 import { MonacoLanguageClient } from "monaco-languageclient";
 import { CloseAction, ErrorAction } from "vscode-languageclient/browser.js";
@@ -358,6 +359,7 @@ export function MonacoWorkspace() {
           beforeMount={(m) => {
             monacoRef.current = m as unknown as typeof monaco;
             setMonacoReady(true);
+            void ensureVscodeServicesStarted(workspaceRoot);
             // If LSP is already up, disable built-in diagnostics immediately.
             if (lspPort) {
               try {

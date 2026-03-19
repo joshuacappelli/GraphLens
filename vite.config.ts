@@ -8,4 +8,7 @@ export default defineConfig({
   build: {
     outDir: './app/renderer',
   },
+  worker: {
+    format: 'es',
+  },
 })
